@@ -1,0 +1,24 @@
+{
+  "profile": "cosys-demo-instance-2",
+  "sitl_instance": 2,
+  "ports": {
+    "cosys_control_udp": 9022,
+    "sitl_sensor_udp": 9023,
+    "mavlink_tcp": 5780,
+    "mission_planner_tcp": 5782,
+    "cosys_rpc_tcp": 41452
+  },
+  "origin": {
+    "latitude": 50.31821195033009,
+    "longitude": 31.137054110768155,
+    "altitude_m": 104.0
+  },
+  "vehicle": "ArduCopter",
+  "clock_speed": 1.0,
+  "future_ros_domain_id": 44,
+  "mission": {
+    "takeoff_m": 5.0,
+    "square_side_m": 15.0,
+    "timeout_s": 240
+  }
+}

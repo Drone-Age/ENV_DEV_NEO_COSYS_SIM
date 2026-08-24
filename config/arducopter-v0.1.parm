@@ -1,0 +1,7 @@
+# INDRA Cosys v0.1 demo overrides. Built-in copter and airsim-quadX defaults
+# are loaded first; this file only enables the independent observer link.
+SERIAL1_PROTOCOL 2
+SERIAL1_BAUD 115
+SCHED_LOOP_RATE 100
+SIM_GPS1_HZ 10
+GPS1_RATE_MS 100

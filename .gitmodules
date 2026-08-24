@@ -1,0 +1,7 @@
+[submodule "third_party/Cosys-AirSim"]
+	path = third_party/Cosys-AirSim
+	url = https://github.com/Drone-Age/Cosys-AirSim.git
+	branch = indra-ue5.8
+[submodule "third_party/ardupilot"]
+	path = third_party/ardupilot
+	url = https://github.com/Drone-Age/ardupilot.git

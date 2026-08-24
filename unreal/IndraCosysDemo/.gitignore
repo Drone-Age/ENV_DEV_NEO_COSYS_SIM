@@ -1,0 +1,23 @@
+# AirSim is staged from the pinned submodule during setup/build.
+Plugins/
+# Don't add packaged binaries
+Packaged/
+
+# don't check-in generated files
+*.sln
+*_BuiltData.uasset
+/.kdev/
+/*.kdev4
+/*.pro
+/*.workspace
+/*CodeCompletionFolders.txt
+/*CodeLitePreProcessor.txt
+/*.pri
+/CMakeLists.txt
+/Makefile
+# Parent-owned Content and the project descriptor are release inputs.
+
+# avoid checking in MacOS XCode assets
+*.xcworkspace
+/.vsconfig
+/Builds/*

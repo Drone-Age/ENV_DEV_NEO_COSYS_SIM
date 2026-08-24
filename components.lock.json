@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "bundle_version": "0.1.0",
+  "platform": {
+    "unreal_engine": "5.8.1",
+    "visual_studio": "17.14",
+    "msvc": "14.44",
+    "msvc_minimum": "14.44.35211",
+    "windows_sdk": "10.0.22621.0",
+    "wsl_distribution": "Ubuntu",
+    "ubuntu": "24.04",
+    "future_ros_domain_id": 44
+  },
+  "submodules": {
+    "third_party/Cosys-AirSim": {
+      "url": "https://github.com/Drone-Age/Cosys-AirSim.git",
+      "branch": "indra-ue5.8",
+      "commit": "a552dd6cd517b8d5d26629ad88004356c3007326",
+      "release": "5.8-v3.4.1"
+    },
+    "third_party/ardupilot": {
+      "url": "https://github.com/Drone-Age/ardupilot.git",
+      "commit": "ebceaa75aa175c6b6b52f69a8da8337e2919d62b",
+      "firmware": "ArduCopter 4.8.0-dev"
+    }
+  },
+  "mission_planner": {
+    "version": "1.3.83",
+    "platform": "windows-portable",
+    "archive": "MissionPlanner-1.3.83.zip",
+    "url": "https://firmware.ardupilot.org/Tools/MissionPlanner/MissionPlanner-1.3.83.zip",
+    "sha256": "ff3694f7a9038caf756545049dd7aef74e3d0d8fe3586e87aa881045704dd6f9"
+  }
+}

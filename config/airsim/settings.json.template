@@ -1,0 +1,23 @@
+{
+  "SeeDocsAt": "https://cosys-lab.github.io/Cosys-AirSim/settings/",
+  "SettingsVersion": 2.0,
+  "SimMode": "Multirotor",
+  "ClockSpeed": __CLOCK_SPEED__,
+  "ApiServerPort": __RPC_PORT__,
+  "OriginGeopoint": {
+    "Latitude": __ORIGIN_LAT__,
+    "Longitude": __ORIGIN_LON__,
+    "Altitude": __ORIGIN_ALT__
+  },
+  "Vehicles": {
+    "Copter": {
+      "VehicleType": "ArduCopter",
+      "AutoCreate": true,
+      "UseSerial": false,
+      "LocalHostIp": "__WINDOWS_IP__",
+      "UdpIp": "__WSL_IP__",
+      "UdpPort": __SENSOR_PORT__,
+      "ControlPort": __CONTROL_PORT__
+    }
+  }
+}

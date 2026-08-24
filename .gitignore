@@ -1,0 +1,24 @@
+.runtime/
+.venv/
+logs/
+*.log
+__pycache__/
+*.py[cod]
+
+# Unreal generated state
+unreal/**/Binaries/
+unreal/**/DerivedDataCache/
+unreal/**/Intermediate/
+unreal/**/Saved/
+unreal/**/.vs/
+unreal/**/Plugins/AirSim/
+*.sln
+*.VC.db
+*.opensdf
+
+# Local IDE and OS files
+.idea/
+.vscode/
+*.user
+Thumbs.db
+.DS_Store
