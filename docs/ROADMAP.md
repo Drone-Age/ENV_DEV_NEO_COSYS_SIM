@@ -22,7 +22,7 @@ Gate: repeat the Blocks smoke after every launcher, Cosys or sensor-path change.
 - [done] Pass the 15 m square flight in the real map (`2026-08-24_204647_test_6c00d140`): heartbeat, sensor exchange, healthy EKF, ARM, all waypoints, LAND and DISARM; maximum altitude 5.71 m.
 - [done] Sustain 640 x 480 raw RGB at 20.74 unique FPS with zero duplicate timestamps (`2026-08-24_205010_camera-sim2-rural-640x480_42cfbbd9`).
 - [done] Repartition the generated Landscape into 256 runtime streaming proxies, verify 1024 collision components, remove the temporary pad, hit DEM collision at 150 m and 500 m, and pass the complete square flight directly on the DEM (`2026-08-24_214945_test_50550629`).
-- [pass, optimize] 1280 x 720 raw RGB reaches 15.33 unique FPS in rural and passes its 10 FPS minimum. The asynchronous producer in M2 remains required to pursue stable 20 Hz and tighter jitter; 640 x 480 remains qualified at >=20 FPS.
+- [done] Replace the 15.33 FPS synchronous rural path with the fixed-rate asynchronous producer. The qualified 20-second runs now reach 20.50 FPS at 640 x 480 and 20.49 FPS at 1280 x 720, with zero duplicate timestamps and non-uniform pixel content.
 - Add georeferencing, landscape material, roads/land-use masks, performant grass, several tree variants, sunflower/corn field representation, HLOD and collision checks.
 - Keep `qualification` offline and reproducible. Keep `visual` separately configurable.
 - Attach `cesium-global` outside the local qualification polygon for effectively unbounded streamed WGS84/ECEF exploration. The local core remains authoritative for flight physics and test collision; Cesium is not treated as an infinite deterministic physics mesh.
@@ -33,8 +33,11 @@ Structural subgate: `env build-map sim2-rural` now regenerates and reload-verifi
 ## M2 - sensor and ROS compatibility
 
 - Implement the ROS 2 Jazzy topics, frames and simulation timestamps documented in `TEST_COMPATIBILITY.md`.
-- In `Drone-Age/Cosys-AirSim:indra-ue5.8`, decouple camera production from synchronous RPC: fixed-rate RGB at 20 Hz, asynchronous GPU readback and bounded ring buffer.
-- Provide 640 x 480 and 1280 x 720 performance evidence. Acceptance is >=20 FPS and >=10 FPS respectively; stable 20 Hz at 1280 x 720 is an explicit optimization target, while measured maximum throughput and jitter are reported separately.
+- [done] In `Drone-Age/Cosys-AirSim:indra-ue5.8`, decouple camera production from synchronous RPC: fixed-rate RGB at 21 Hz, three-slot asynchronous GPU readback and a bounded latest-frame buffer.
+- [done] Provide 640 x 480 and 1280 x 720 raw-RGB evidence. Acceptance remains >=20 FPS and >=10 FPS respectively; the current reference result is approximately 20.5 FPS at both resolutions.
+- [in progress] After the successful flight baseline, harden camera cadence: report p50/p95/p99/max inter-frame gaps and the worst full two-second window; require that neither supported resolution falls below 10 unique FPS in any full two-second window. Windows-native 1280 x 720 passes at 20.56 FPS / 19.5 FPS worst window with 0 duplicate timestamps; WSL2 NAT varies around 14-15 FPS and has produced an 8.5 FPS worst window, so the final ROS/VINS transport is not qualified yet.
+- Profile with Unreal Insights and GPU timing before changing quality settings. Preserve `ForceUpdate=false`, one qualification Scene layer, disabled sensor Lumen GI/reflections and downstream compression. Compare a packaged Development target against Editor only after ROS/VINS transport is working.
+- If RPC copying becomes the next measured bottleneck, evaluate in order: batched/latest-frame RPC, a native ROS 2 publisher or shared-memory ring, then GPU video encoding for operator/recording streams. VINS keeps raw timestamped RGB unless an encoded path proves equivalent latency, timestamp and image-quality gates.
 - Add timestamp-preserving batched 200 Hz camera IMU, body IMU, gimbal, VINS initializer, vision bridge and ArduPilot ExternalNav.
 - Add wind set/get-applied command/ack and preserve separate MAVLink endpoints.
 

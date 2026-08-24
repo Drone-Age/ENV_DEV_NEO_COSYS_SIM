@@ -132,9 +132,9 @@ function Invoke-EnvironmentBuildMap([string]$EnvironmentId) {
     Write-Pass 'SIM2 Rural map' 'World Partition, 1024 render components, 1024 collision components, EPSG:32636 and Sentinel-2 material'
 }
 
-function Write-Capabilities {
+function Get-BackendCapabilities {
     $manifest = Get-EnvironmentManifest -EnvironmentId $Environment -AllowScaffold
-    $capabilities = [ordered]@{
+    return [ordered]@{
         schema = 1
         backend = 'cosys-airsim'
         backend_version = $script:Lock.submodules.'third_party/Cosys-AirSim'.release
@@ -151,8 +151,18 @@ function Write-Capabilities {
             ros2 = $false
             vins = $false
             wind_command_ack = $false
-            camera_fixed_rate_hz = $false
+            camera_fixed_rate_hz = $true
             camera_imu_batched = $false
+        }
+        camera = [ordered]@{
+            mode = 'fixed-rate-async-gpu-readback'
+            producer_hz = 21.0
+            qualified_resolutions = @(
+                [ordered]@{ width = 640; height = 480; minimum_fps = 20.0 }
+                [ordered]@{ width = 1280; height = 720; minimum_fps = 10.0 }
+            )
+            rejects_duplicate_timestamps = $true
+            rejects_uniform_frames = $true
         }
         commands = [ordered]@{
             run = @('-Environment', '-RenderProfile', '-Headless', '-NoMissionPlanner', '-Preview')
@@ -160,6 +170,10 @@ function Write-Capabilities {
             qualification_accepted_args = @('-RunId', '-FlightLogDirectory', '-Rosbag', '-FlightQualification', '-FlightQualificationLimitM', '-FlightQualificationProfile', '-FlightQualificationNoWind', '-FlightQualificationNoVisualUi', '-RouteQualification', '-RouteQualificationProfile', '-VinsConfigFile', '-Distro', '-WithMissionPlanner')
         }
     }
+}
+
+function Write-Capabilities {
+    $capabilities = Get-BackendCapabilities
     $serialized = $capabilities | ConvertTo-Json -Depth 10
     if ($Json) { Write-Output $serialized } else { $capabilities | Format-List }
 }
@@ -167,8 +181,13 @@ function Write-Capabilities {
 function Assert-QualificationCapabilities {
     if (-not $FlightQualification -and -not $RouteQualification) { return }
     if ($FlightQualification -and $RouteQualification) { throw 'FlightQualification and RouteQualification are mutually exclusive.' }
-    $missing = @('ros2', 'vins', 'camera_fixed_rate_hz', 'camera_imu_batched', 'wind_command_ack')
-    if ($FlightQualificationNoWind) { $missing = @($missing | Where-Object { $_ -ne 'wind_command_ack' }) }
+    $required = @('ros2', 'vins', 'camera_fixed_rate_hz', 'camera_imu_batched', 'wind_command_ack')
+    if ($FlightQualificationNoWind) { $required = @($required | Where-Object { $_ -ne 'wind_command_ack' }) }
+    $interfaces = (Get-BackendCapabilities).interfaces
+    $missing = @($required | Where-Object {
+        -not $interfaces.Contains($_) -or -not [bool]$interfaces[$_]
+    })
+    if ($missing.Count -eq 0) { return }
     $kind = if ($FlightQualification) { 'VINS climb' } else { 'VINS route' }
     throw "$kind qualification is registered but not enabled on the current Cosys backend. Missing capabilities: $($missing -join ', '). Query '.\dev.ps1 capabilities -Environment $Environment -Json'. No simulator process was started."
 }
@@ -330,7 +349,7 @@ function Invoke-Build {
         $environmentPluginName = [IO.Path]::GetFileNameWithoutExtension([string]$environmentManifest.content_plugin.descriptor)
         $environmentBuildArguments += "-EnablePlugins=$environmentPluginName"
     }
-    & $buildBat IndraCosysDemoEditor Win64 Development "-Project=$project" -WaitMutex -FromMsBuild -DisableAdaptiveUnity -MaxParallelActions=2 @environmentBuildArguments "-CompilerVersion=$compilerVersion" "-VCToolchainVersion=$compilerVersion" '-WindowsSdkVersion=10.0.22621.0'
+    & $buildBat IndraCosysDemoEditor Win64 Development "-Project=$project" -WaitMutex -FromMsBuild -NoUBA -DisableAdaptiveUnity -MaxParallelActions=2 @environmentBuildArguments "-CompilerVersion=$compilerVersion" "-VCToolchainVersion=$compilerVersion" '-WindowsSdkVersion=10.0.22621.0'
     if ($LASTEXITCODE -ne 0) { throw 'Unreal Development Editor build failed.' }
 
     Write-Step 'Building ArduCopter SITL in Ubuntu 24.04'

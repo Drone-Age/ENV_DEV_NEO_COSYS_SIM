@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)][ValidateRange(1, 8192)][int]$Height,
     [ValidateRange(5, 300)][int]$DurationSeconds = 20,
     [ValidateRange(0, 240)][double]$MinRawFps = 20,
+    [ValidateRange(0, 240)][double]$MinSustainedRawFps = 10,
     [ValidateRange(320, 3840)][int]$ViewportWidth = 640,
     [ValidateRange(240, 2160)][int]$ViewportHeight = 360,
     [ValidatePattern('^[a-z0-9][a-z0-9-]*$')][string]$Environment = 'blocks',
@@ -12,6 +13,7 @@ param(
     [switch]$Offscreen,
     [switch]$ForceUpdate,
     [switch]$DisableAsyncCamera,
+    [switch]$DisableNamedImus,
     [switch]$SaveSamples,
     [switch]$WindowsClient
 )
@@ -31,6 +33,9 @@ $runDirectory = New-RunDirectory "camera-$Environment-$($Width)x$Height"
 try {
     $settingsInfo = New-AirSimSettings $runDirectory
     $settings = Get-Content -Raw -LiteralPath $settingsInfo.Path | ConvertFrom-Json
+    if ($DisableNamedImus) {
+        $settings.Vehicles.Copter.PSObject.Properties.Remove('Sensors')
+    }
     $capture = [pscustomobject]@{
         ImageType = 0
         Width = $Width
@@ -112,7 +117,7 @@ try {
         $previousPythonPath = $env:PYTHONPATH
         try {
             $env:PYTHONPATH = Join-Path $script:RepoRoot 'third_party\Cosys-AirSim\PythonClient'
-            $clientArguments = @($benchmark, '--host', '127.0.0.1', '--port', $script:Config.ports.cosys_rpc_tcp, '--duration', $DurationSeconds, '--min-raw-fps', $MinRawFps, '--output', $output)
+            $clientArguments = @($benchmark, '--host', '127.0.0.1', '--port', $script:Config.ports.cosys_rpc_tcp, '--duration', $DurationSeconds, '--min-raw-fps', $MinRawFps, '--min-sustained-raw-fps', $MinSustainedRawFps, '--output', $output)
             if ($SaveSamples) { $clientArguments += '--save-samples' }
             & python @clientArguments 2>&1 |
                 Tee-Object -FilePath (Join-Path $runDirectory 'camera-benchmark.log') | ForEach-Object { Write-Host $_ }
@@ -126,7 +131,7 @@ try {
         $output = Convert-ToWslPath (Join-Path $runDirectory 'camera-benchmark.json')
         $pythonPath = Convert-ToWslPath (Join-Path $script:RepoRoot 'third_party\Cosys-AirSim\PythonClient')
         $sampleArgument = if ($SaveSamples) { ' --save-samples' } else { '' }
-        $command = "source ~/venv-ardupilot/bin/activate && PYTHONPATH='$pythonPath' python3 '$benchmark' --host '$($settingsInfo.Network.WindowsIp)' --port $($script:Config.ports.cosys_rpc_tcp) --duration $DurationSeconds --min-raw-fps $MinRawFps --output '$output'$sampleArgument"
+        $command = "source ~/venv-ardupilot/bin/activate && PYTHONPATH='$pythonPath' python3 '$benchmark' --host '$($settingsInfo.Network.WindowsIp)' --port $($script:Config.ports.cosys_rpc_tcp) --duration $DurationSeconds --min-raw-fps $MinRawFps --min-sustained-raw-fps $MinSustainedRawFps --output '$output'$sampleArgument"
         $result = Invoke-Wsl -Command $command -AllowFailure
         $result.Output | Tee-Object -FilePath (Join-Path $runDirectory 'camera-benchmark.log') | ForEach-Object { Write-Host $_ }
         if ($result.ExitCode -ne 0) { throw "Camera benchmark failed with code $($result.ExitCode)." }

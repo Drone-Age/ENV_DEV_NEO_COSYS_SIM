@@ -52,7 +52,7 @@ For the camera throughput qualification (640x480 and 1280x720, no Mission Planne
 .\dev.ps1 camera-test
 ```
 
-The qualified live path requests uncompressed RGB frames on demand with `ForceUpdate=false`. Acceptance is at least 20 FPS for 640 x 480 and 10 FPS for 1280 x 720; improving 1280 x 720 toward a stable 20 Hz remains an optimization target. PNG compression is not used in the real-time path.
+The qualified live path returns uncompressed RGB from a fixed-rate asynchronous producer with `ForceUpdate=false`. Acceptance is at least 20 FPS for 640 x 480, at least 10 FPS for 1280 x 720, and at least 10 FPS in the worst full two-second window. The demonstrated 1280 x 720 result is 20.49 FPS; PNG compression is not used in the real-time path.
 
 Each run gets its own evidence directory under `logs`. Use `.\dev.ps1 stop` to stop only processes recorded by this environment, and `.\dev.ps1 logs` to open the newest bundle.
 

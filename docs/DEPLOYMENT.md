@@ -75,7 +75,7 @@ Their expected commits are recorded in `tests/test-registry.json`. Until `dev.ps
 
 The expected source identities are enforced by `components.lock.json`:
 
-- `third_party/Cosys-AirSim` at `d2ddee2141dfb3fc007cfdbba90ac240a15acf3e`, fork branch `indra-ue5.8`, based on release `5.8-v3.4.1`.
+- `third_party/Cosys-AirSim` at `cf79da61589bf3efeb970f5a27029abdd837d442`, fork branch `indra-ue5.8`, based on release `5.8-v3.4.1`.
 - `third_party/ardupilot` at `ebceaa75aa175c6b6b52f69a8da8337e2919d62b`.
 
 Do not continue while `doctor` reports a failure. A Mission Planner warning before `setup` is expected.

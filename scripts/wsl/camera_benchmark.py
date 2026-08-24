@@ -23,6 +23,39 @@ def percentile(values: list[float], fraction: float) -> float:
     return ordered[index]
 
 
+def cadence_metrics(times_s: list[float], window_s: float = 2.0) -> dict:
+    """Describe cadence without allowing a good average to hide long stalls."""
+    if len(times_s) < 2:
+        return {
+            "interval_ms": {"p50": math.nan, "p95": math.nan, "p99": math.nan, "max": math.nan},
+            "window_s": window_s,
+            "minimum_window_fps": 0.0,
+        }
+
+    intervals_ms = [
+        (current - previous) * 1000.0
+        for previous, current in zip(times_s, times_s[1:])
+    ]
+    window_rates = []
+    start = times_s[0]
+    final_full_window_start = times_s[-1] - window_s
+    while start <= final_full_window_start:
+        frame_count = sum(start <= timestamp < start + window_s for timestamp in times_s)
+        window_rates.append(frame_count / window_s)
+        start += 0.25
+
+    return {
+        "interval_ms": {
+            "p50": percentile(intervals_ms, 0.50),
+            "p95": percentile(intervals_ms, 0.95),
+            "p99": percentile(intervals_ms, 0.99),
+            "max": max(intervals_ms),
+        },
+        "window_s": window_s,
+        "minimum_window_fps": min(window_rates) if window_rates else 0.0,
+    }
+
+
 def run_case(
     client,
     camera: str,
@@ -86,6 +119,8 @@ def run_case(
     )
     delivery_cadence_fps = (len(unique_samples) - 1) / delivery_span_s if delivery_span_s > 0 else 0.0
     simulation_cadence_fps = (len(unique_samples) - 1) / simulation_span_s if simulation_span_s > 0 else 0.0
+    delivery_times_s = [sample["received_s"] for sample in unique_samples]
+    simulation_times_s = [sample["timestamp_ns"] / 1_000_000_000.0 for sample in unique_samples]
     latencies = [sample["latency_ms"] for sample in samples]
     sizes = [sample["bytes"] for sample in samples]
     dimensions = sorted({(sample["width"], sample["height"]) for sample in samples})
@@ -118,6 +153,8 @@ def run_case(
         "unique_fps": unique_timestamps / elapsed,
         "delivery_cadence_fps": delivery_cadence_fps,
         "simulation_cadence_fps": simulation_cadence_fps,
+        "delivery_stability": cadence_metrics(delivery_times_s),
+        "simulation_stability": cadence_metrics(simulation_times_s),
         "latency_ms": {
             "mean": statistics.fmean(latencies),
             "p50": percentile(latencies, 0.50),
@@ -143,6 +180,7 @@ def main() -> int:
     parser.add_argument("--duration", type=float, default=20.0)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--min-raw-fps", type=float, default=0.0)
+    parser.add_argument("--min-sustained-raw-fps", type=float, default=10.0)
     parser.add_argument("--save-samples", action="store_true")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
@@ -167,6 +205,7 @@ def main() -> int:
     ) and len(raw_case["sample_stats"]) == 2
     passed = (
         raw_case["delivery_cadence_fps"] >= args.min_raw_fps
+        and raw_case["delivery_stability"]["minimum_window_fps"] >= args.min_sustained_raw_fps
         and raw_case["duplicate_timestamps"] == 0
         and image_content_valid
     )
@@ -175,6 +214,8 @@ def main() -> int:
         "verdict": "PASS" if passed else "FAIL",
         "acceptance": {
             "minimum_raw_unique_fps": args.min_raw_fps,
+            "minimum_sustained_raw_fps": args.min_sustained_raw_fps,
+            "sustained_window_s": raw_case["delivery_stability"]["window_s"],
             "metric": "delivery_cadence_fps",
             "requires_zero_duplicate_timestamps": True,
             "requires_nonuniform_samples": True,

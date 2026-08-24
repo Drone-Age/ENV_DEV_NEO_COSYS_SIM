@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "profile_id": "imx477-cs2006-h30-cosys-640x480-v1",
+  "ros_domain_id": 44,
+  "vehicle": "Copter",
+  "camera": {
+    "name": "0",
+    "width": 640,
+    "height": 480,
+    "producer_hz": 21.0,
+    "published_hz": 20.0,
+    "frame_id": "camera_link",
+    "encoding": "rgb8",
+    "distortion_model": "plumb_bob",
+    "k": [502.299385, 0.0, 320.0, 0.0, 502.299385, 240.0, 0.0, 0.0, 1.0],
+    "d": [0.0, 0.0, 0.0, 0.0, 0.0]
+  },
+  "body_imu": {
+    "name": "BodyImu",
+    "frame_id": "imu_link"
+  },
+  "camera_imu": {
+    "name": "CameraImu",
+    "frame_id": "camera_imu_link",
+    "mounting": "rigid-zero-gimbal-only-until-batched-api"
+  },
+  "ground_truth": {
+    "frame_id": "odom",
+    "child_frame_id": "base_link",
+    "published_hz": 50.0
+  }
+}

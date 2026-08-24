@@ -9,6 +9,22 @@
     "Longitude": __ORIGIN_LON__,
     "Altitude": __ORIGIN_ALT__
   },
+  "CameraDefaults": {
+    "CaptureSettings": [
+      {
+        "ImageType": 0,
+        "Width": 640,
+        "Height": 480,
+        "FOV_Degrees": 65,
+        "AutoExposureMethod": 0,
+        "AutoExposureSpeed": 100,
+        "AutoExposureBias": 0,
+        "LumenGIEnable": false,
+        "LumenReflectionEnable": false,
+        "ForceUpdate": false
+      }
+    ]
+  },
   "Vehicles": {
     "Copter": {
       "VehicleType": "ArduCopter",
@@ -17,7 +33,19 @@
       "LocalHostIp": "__WINDOWS_IP__",
       "UdpIp": "__WSL_IP__",
       "UdpPort": __SENSOR_PORT__,
-      "ControlPort": __CONTROL_PORT__
+      "ControlPort": __CONTROL_PORT__,
+      "Sensors": {
+        "BodyImu": {
+          "SensorType": 2,
+          "Enabled": true,
+          "GenerateNoise": false
+        },
+        "CameraImu": {
+          "SensorType": 2,
+          "Enabled": true,
+          "GenerateNoise": false
+        }
+      }
     }
   }
 }

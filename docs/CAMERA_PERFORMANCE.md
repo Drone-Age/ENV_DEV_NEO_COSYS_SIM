@@ -2,7 +2,7 @@
 
 ## Qualified target
 
-INDRA acceptance requires at least 20 FPS at 640x480 and at least 10 FPS at 1280x720. Stable 20 Hz at 1280x720 remains a performance target rather than a release blocker. The live sensor path therefore uses:
+INDRA acceptance requires at least 20 FPS at 640x480 and at least 10 FPS at 1280x720. The asynchronous path has already demonstrated approximately 20.5 FPS at both resolutions. The 1280x720 release floor remains 10 FPS so later scene-quality work cannot silently turn the demonstrated 20 Hz into a hard dependency. The live sensor path therefore uses:
 
 - one Scene camera;
 - 640x480 or 1280x720;
@@ -12,7 +12,7 @@ INDRA acceptance requires at least 20 FPS at 640x480 and at least 10 FPS at 1280
 - PNG/JPEG encoding, display and recording performed asynchronously downstream.
 - a 640x360 operator/diagnostic viewport during qualification (sensor resolution is unchanged).
 
-Run `./dev.ps1 camera-test` to create fresh evidence bundles. Mission Planner is never launched by this test. Count unique `time_stamp` values; repeated RPC responses must not be counted as new frames.
+Run `./dev.ps1 camera-test` to create fresh evidence bundles. Mission Planner is never launched by this test. Count unique `time_stamp` values; repeated RPC responses must not be counted as new frames. The benchmark also reports p50/p95/p99/max delivery and simulation intervals plus the worst full two-second delivery window. A run fails if that window drops below 10 unique FPS, even if its whole-run average is high.
 
 ## Measurements on the reference workstation
 
@@ -23,6 +23,9 @@ The reference machine is Ryzen 5 8400F, RTX 5060 Ti 16 GB, UE 5.8.1 and Cosys Bl
 | Async GPU readback, SIM2 Rural, 20 s | 640x480 | raw RGB | 20.50 | 48.77 ms |
 | Async GPU readback, SIM2 Rural, 20 s | 1280x720 | raw RGB | 20.49 | 48.78 ms |
 | Async GPU readback + pixel gate | 1280x720 | raw RGB | 19.80 | 50.42 ms |
+| Async, Windows-native client, monotonic fix + cadence gate | 1280x720 | raw RGB | 20.56 | 48.56 ms |
+| Async, WSL2 NAT client, cadence gate | 1280x720 | raw RGB | 15.00 | 66.86 ms |
+| Async, WSL2 NAT, named IMUs removed (A/B) | 1280x720 | raw RGB | 14.38 | 69.79 ms |
 | On demand | 640x480 | raw RGB | 21.96-23.64 | 42.29-45.54 ms |
 | On demand, 1280x720 viewport | 1280x720 | raw RGB | 19.10-20.31 | 49.22-52.36 ms |
 | On demand, 640x360 viewport | 1280x720 | raw RGB | 20.25 | 49.37 ms |
@@ -40,7 +43,9 @@ The reference machine is Ryzen 5 8400F, RTX 5060 Ti 16 GB, UE 5.8.1 and Cosys Bl
 
 The asynchronous rural runs used 411/411 unique frames at 640x480 and 410/410 at 1280x720, with no duplicate timestamps. A separate 1280x720 sample run measured pixel ranges 79-239 and 91-245 with standard deviations 51.09 and 43.32, proving that throughput did not hide a black buffer. Re-run qualification after scene, lighting, driver, camera count or capture-layer changes.
 
-The instrumented rural repeat reached 17.65 unique FPS with zero duplicate timestamps. RTX 5060 Ti utilization averaged 39.46%, reached 46% maximum, and averaged 48.84 W against a 180 W board limit. Reducing the operator viewport again from 640x360 to 320x240 slightly reduced throughput to 17.28 FPS, so 640x360 remains the qualified viewport. These measurements rule out GPU saturation and operator viewport fill rate as the primary bottleneck on the reference workstation.
+The stricter cadence repeat exposed an important transport distinction. After the monotonic-timestamp fix, the Windows-native client delivered 20.56 FPS, never fell below 19.5 FPS in a full two-second window and returned 411/411 distinct timestamps (`2026-08-25_020328_camera-sim2-rural-1280x720_12ab81cb`). The WSL2 NAT client delivered 15.00 FPS and fell to 8.5 FPS in its worst window. Removing the two named IMUs did not restore throughput (14.38 FPS), so the IMU update is not the cause. These results mean the renderer and fixed Cosys path meet the target, but the current WSL NAT per-frame msgpack path is not yet a qualified VINS transport.
+
+The instrumented synchronous rural repeat reached 17.65 unique FPS with zero duplicate timestamps. RTX 5060 Ti utilization averaged 39.46%, reached 46% maximum, and averaged 48.84 W against a 180 W board limit. Reducing the operator viewport again from 640x360 to 320x240 slightly reduced throughput to 17.28 FPS, so 640x360 remains the qualified viewport. These measurements rule out GPU saturation and operator viewport fill rate as the primary bottleneck on the reference workstation. The host is already on the Windows High performance plan; the installed GPU is an RTX 5060 Ti 16 GB with a 180 W limit. Driver or NVIDIA power-policy changes are therefore controlled experiments, not the primary fix.
 
 A historical synchronous 640x480 repeat produced 18.62 unique FPS and motivated the fork change. The strict gate is now passed by the asynchronous implementation without weakening the 20 FPS threshold.
 
@@ -66,9 +71,22 @@ The project already sets `bThrottleCPUWhenNotForeground=False` in `DefaultEditor
 4. **Avoid duplicate rendering modes.** Keep `ForceUpdate=false`; Unreal documents that manual capture must not be combined with `bCaptureEveryFrame`. `-RenderOffscreen` and PNG already measured worse here and are rejected for the real-time path.
 5. **Keep compression downstream.** Raw capture is now decoupled from the stock blocking readback. PNG remains CPU-bound at about 8.85 FPS for 1280x720 and is diagnostic only.
 
+## Ranked follow-up variants
+
+1. **Harden the current asynchronous RPC path (selected).** Measure cadence tails, Unreal game/render/RHI threads, GPU frame time, VRAM and clock/power state during a full flight. Keep a 21 Hz producer and latest-frame semantics; do not let a slow subscriber back-pressure simulation.
+2. **WSL mirrored-network A/B test (next, reversible).** The host is currently in default NAT mode and has no `%UserProfile%\.wslconfig`. On supported Windows 11/WSL builds, test `networkingMode=mirrored` and `127.0.0.1` against the same NAT evidence. This requires `wsl --shutdown`, can affect SIM2 networking, and is therefore opt-in until both flight and camera gates pass. Do not promote it from one throughput result; also verify SITL UDP, MAVLink and ROS discovery/firewall behaviour.
+3. **Qualification render profile.** Keep one Scene layer, `ForceUpdate=false`, no sensor Lumen GI/reflections, no motion blur/depth of field and no synchronous PNG. Reduce shadows, translucency or foliage only when Unreal Insights/GPU timing identifies them and VINS feature/photometric tests remain green.
+4. **Packaged Development executable.** Compare it with `UnrealEditor -game` under the exact same scene, route and camera gate. Adopt it for qualification only if it measurably reduces jitter and preserves diagnostics/deployment reproducibility.
+5. **Windows-native camera relay / native ROS 2 publisher.** The native client already proves 20 FPS. If mirrored networking does not close the gap, keep the Cosys consumer on Windows and forward bounded timestamped frames to ROS 2, or publish from a C++ bridge. Avoid an additional render and avoid pure-Python per-pixel copies.
+6. **Shared-memory or purpose-built streaming transport.** If DDS/raw forwarding still copies too much, evaluate a bounded ring and a transport optimized for large frames. Cross-OS shared memory is not assumed to be transparent under WSL2; it needs its own latency, loss and shutdown tests.
+7. **NVENC/GStreamer stream.** Useful for Mission Planner-like viewing, remote operation and recording at 720p/1080p. It is not the primary VINS feed because encoding/decoding adds latency and can alter features. Qualify it as a separate operator stream; lossless NVENC is an experiment, not an assumed VINS replacement.
+8. **Multiple render layers/cameras.** Schedule only requested layers, stagger captures where simultaneity is not required, and batch truly simultaneous requests. Every added Scene/depth/segmentation capture gets its own rate and GPU-budget gate.
+
+Do not use `ClockSpeed < 1` to manufacture a wall-clock FPS result: it changes the real-time meaning of the test. Do not count viewport FPS, RPC call count or repeated timestamps as sensor FPS.
+
 The repository currently resides on the `F:` SATA HDD. Put Unreal Derived Data Cache and disposable `Intermediate` data on an SSD on machines where this is available; this materially improves builds, shader preparation and texture-streaming stutter. It is not expected to remove the steady synchronous RPC/readback ceiling, so measure it separately from sensor throughput and keep all source/submodule paths unchanged.
 
-Primary references: [Cosys custom environment guidance](https://github.com/Cosys-Lab/Cosys-AirSim/blob/main/docs/unreal_custenv.md), [Cosys issue #82](https://github.com/Cosys-Lab/Cosys-AirSim/issues/82), [AirSim issue #1766](https://github.com/microsoft/AirSim/issues/1766), [AirSim issue #796](https://github.com/microsoft/AirSim/issues/796), [UE 5.8 `USceneCaptureComponent2D::CaptureScene`](https://dev.epicgames.com/documentation/unreal-engine/API/Runtime/Engine/USceneCaptureComponent2D/CaptureScene), and [UE 5.8 `FRHIGPUTextureReadback`](https://dev.epicgames.com/documentation/unreal-engine/API/Runtime/RHI/FRHIGPUTextureReadback).
+Primary references: [Cosys camera settings](https://github.com/Cosys-Lab/Cosys-AirSim/blob/main/docs/settings.md), [Cosys issue #82 and its capture-every-frame experiment](https://github.com/Cosys-Lab/Cosys-AirSim/issues/82#issuecomment-3187222325), [AirSim issue #1766](https://github.com/microsoft/AirSim/issues/1766), [AirSim issue #796](https://github.com/microsoft/AirSim/issues/796), [UE 5.8 performance profiling](https://dev.epicgames.com/documentation/unreal-engine/introduction-to-performance-profiling-and-configuration-in-unreal-engine), [UE 5.8 `USceneCaptureComponent2D::CaptureScene`](https://dev.epicgames.com/documentation/unreal-engine/API/Runtime/Engine/USceneCaptureComponent2D/CaptureScene), [UE 5.8 `FRHIGPUTextureReadback`](https://dev.epicgames.com/documentation/unreal-engine/API/Runtime/RHI/FRHIGPUTextureReadback), [Microsoft WSL networking modes](https://learn.microsoft.com/windows/wsl/networking), and [NVIDIA Video Codec SDK](https://docs.nvidia.com/video-technologies/video-codec-sdk/13.1/index.html).
 
 ## Implemented fork path and next camera work
 
