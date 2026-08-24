@@ -4,6 +4,8 @@
 
 Existing repositories such as `Drone-Age/ENV_DEV_NEO_SIM_TEST_VINS_CLIMB` and `Drone-Age/ENV_DEV_NEO_SIM_TEST_VINS_10KM` must run against SIM2/Gazebo and this Cosys/Unreal backend without separate permanent test forks. Their entrypoints, profile schema, ROS topic contract and JSON/PDF verdict meanings remain stable. Backend-specific launch details belong in each parent simulator.
 
+The parent pins those exact test repositories as Git submodules under `tests/`. The same test commit must be used for the SIM2 reference run and the Cosys run. Compatibility does not mean copying mission logic into this repository: it means providing the backend-neutral capability and launch contract expected by the existing test repository.
+
 Before launch, a test calls:
 
 ```powershell
@@ -31,6 +33,8 @@ Before the 25 m climb smoke, the Cosys fork and wrapper must provide:
 - MCAP, DataFlash, parameters, routes and immutable JSON/PDF evidence bundle.
 
 Acceptance order is: ROS/topic conformance -> camera/IMU rate and timestamp tests -> VINS TRACKING/ExternalNav READY -> 25 m climb -> full 1000 m climb -> 10 km Gerono route -> remaining registry suites. Full climb retains 25 m steps, 1000 m ceiling, staged wind, Source Set 2 primary and GNSS standby. Mission Planner remains absent from automation.
+
+For every registered suite, compatibility requires three results: its unmodified public entrypoint starts through the adapter, all required capabilities are reported before launch, and the produced verdict/evidence schema is comparable with SIM2. A backend-specific configuration file is allowed; a backend-specific rewrite of the controller or acceptance logic is not.
 
 ## Parent/test responsibility split
 
