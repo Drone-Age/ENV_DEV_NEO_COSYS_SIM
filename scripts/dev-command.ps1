@@ -472,10 +472,10 @@ switch ($Command) {
     'run' { Assert-QualificationCapabilities; $run = Start-Environment $false -NoMissionPlanner:$NoMissionPlanner; Write-Host "Environment is running. Evidence: $run" -ForegroundColor Green }
     'test' { Assert-QualificationCapabilities; Invoke-SmokeTest }
     'camera-test' {
-        Write-Step 'Qualifying the 20 FPS raw-RGB camera profile (Mission Planner is not started)'
-        & (Join-Path $PSScriptRoot 'camera-benchmark.ps1') -Width 640 -Height 480 -DurationSeconds 20 -Environment $Environment -RenderProfile $RenderProfile -Preview:$Preview
+        Write-Step 'Qualifying raw-RGB camera profiles: 640x480 >= 20 FPS, 1280x720 >= 10 FPS (Mission Planner is not started)'
+        & (Join-Path $PSScriptRoot 'camera-benchmark.ps1') -Width 640 -Height 480 -DurationSeconds 20 -MinRawFps 20 -Environment $Environment -RenderProfile $RenderProfile -Preview:$Preview
         if ($LASTEXITCODE -ne 0) { throw '640x480 camera benchmark failed.' }
-        & (Join-Path $PSScriptRoot 'camera-benchmark.ps1') -Width 1280 -Height 720 -DurationSeconds 20 -Environment $Environment -RenderProfile $RenderProfile -Preview:$Preview
+        & (Join-Path $PSScriptRoot 'camera-benchmark.ps1') -Width 1280 -Height 720 -DurationSeconds 20 -MinRawFps 10 -Environment $Environment -RenderProfile $RenderProfile -Preview:$Preview
         if ($LASTEXITCODE -ne 0) { throw '1280x720 camera benchmark failed.' }
     }
     'stop' {

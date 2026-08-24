@@ -16,6 +16,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
+$gpuMonitor = $null
 
 if (Get-ActiveRun) { throw 'An environment run is already active. Use .\dev.ps1 stop first.' }
 $environmentManifest = Get-RuntimeEnvironmentManifest -EnvironmentId $Environment -Preview:$Preview
@@ -88,6 +89,18 @@ try {
     $pidCheck = Invoke-Wsl -Command "test -s '$runWsl/sitl/wsl.pid' && kill -0 `$(cat '$runWsl/sitl/wsl.pid')" -AllowFailure
     if ($pidCheck.ExitCode -ne 0) { throw "ArduCopter SITL exited during startup; see $runDirectory\sitl\sitl.log" }
 
+    $nvidiaSmi = Get-Command 'nvidia-smi.exe' -ErrorAction SilentlyContinue
+    if ($nvidiaSmi) {
+        $gpuCsv = Join-Path $runDirectory 'gpu-metrics.csv'
+        $gpuArguments = @(
+            '--query-gpu=timestamp,utilization.gpu,utilization.memory,memory.used,clocks.current.graphics,power.draw',
+            '--format=csv,nounits', '--loop-ms=250', "--filename=$gpuCsv"
+        )
+        $gpuMonitor = Start-Process -FilePath $nvidiaSmi.Source -ArgumentList $gpuArguments -WindowStyle Hidden -PassThru
+    } else {
+        Write-Warn 'GPU telemetry' 'nvidia-smi.exe was not found; the camera result remains valid without GPU utilization evidence'
+    }
+
     if ($WindowsClient) {
         $benchmark = Join-Path $script:RepoRoot 'scripts\wsl\camera_benchmark.py'
         $output = Join-Path $runDirectory 'camera-benchmark.json'
@@ -112,6 +125,10 @@ try {
     }
     Write-Host "Camera benchmark complete: $runDirectory" -ForegroundColor Green
 } finally {
+    if ($gpuMonitor -and -not $gpuMonitor.HasExited) {
+        Stop-Process -Id $gpuMonitor.Id -Force -ErrorAction SilentlyContinue
+        Wait-Process -Id $gpuMonitor.Id -Timeout 5 -ErrorAction SilentlyContinue
+    }
     Stop-RecordedProcesses $runDirectory
     Remove-Item -LiteralPath (Join-Path $script:RuntimeRoot 'active-run.txt') -Force -ErrorAction SilentlyContinue
 }

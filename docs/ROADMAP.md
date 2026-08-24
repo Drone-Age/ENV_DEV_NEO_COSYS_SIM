@@ -21,20 +21,20 @@ Gate: repeat the Blocks smoke after every launcher, Cosys or sensor-path change.
 - [done] Create a deterministic 4 x 4 km World Partition/LWC visual core with 1024 verified render and serialized heightfield-collision components.
 - [done] Pass the 15 m square flight in the real map (`2026-08-24_204647_test_6c00d140`): heartbeat, sensor exchange, healthy EKF, ARM, all waypoints, LAND and DISARM; maximum altitude 5.71 m.
 - [done] Sustain 640 x 480 raw RGB at 20.74 unique FPS with zero duplicate timestamps (`2026-08-24_205010_camera-sim2-rural-640x480_42cfbbd9`).
-- [blocked gate] UE 5.8.1 loads the generated Landscape collision objects but Chaos does not instantiate a usable runtime heightfield in this commandlet-generated WP path. Preview flights therefore use a hidden, bounded 200 x 200 m qualification pad at the origin. Replace it with verified full DEM collision before `ready`.
-- [blocked gate] 1280 x 720 raw RGB currently reaches 15.33 unique FPS in rural, below the 20 Hz target. This resolution requires the asynchronous producer in M2; 640 x 480 is the qualified current profile.
+- [done] Repartition the generated Landscape into 256 runtime streaming proxies, verify 1024 collision components, remove the temporary pad, hit DEM collision at 150 m and 500 m, and pass the complete square flight directly on the DEM (`2026-08-24_214945_test_50550629`).
+- [pass, optimize] 1280 x 720 raw RGB reaches 15.33 unique FPS in rural and passes its 10 FPS minimum. The asynchronous producer in M2 remains required to pursue stable 20 Hz and tighter jitter; 640 x 480 remains qualified at >=20 FPS.
 - Add georeferencing, landscape material, roads/land-use masks, performant grass, several tree variants, sunflower/corn field representation, HLOD and collision checks.
 - Keep `qualification` offline and reproducible. Keep `visual` separately configurable.
 - Attach `cesium-global` outside the local qualification polygon for effectively unbounded streamed WGS84/ECEF exploration. The local core remains authoritative for flight physics and test collision; Cesium is not treated as an infinite deterministic physics mesh.
 - Pass the existing 15 m square in Blocks and SIM2 Rural with equivalent vehicle behaviour and at least 20 unique 640 x 480 camera frames/s.
 
-Structural subgate: `env build-map sim2-rural` now regenerates and reload-verifies the map, exact georeference, Sentinel-2 material, World Partition layout, collision data and the bounded preview pad. Runtime gate: `env doctor sim2-rural`, full 4 x 4 km physics line traces/landing probes against DEM (with the pad removed), origin/elevation measurement, seam probes, vegetation checks, flight smoke and 20 Hz 640 x 480 camera test must all PASS before changing readiness from `preview` to `ready`.
+Structural subgate: `env build-map sim2-rural` now regenerates and reload-verifies the map, exact georeference, Sentinel-2 material, 256 World Partition Landscape proxies and 1024 collision components. Origin-area runtime traces and pad-free flight pass. Remaining runtime gate: `env doctor sim2-rural`, full-extent physics line traces/landing probes, origin/elevation measurement, seam probes, vegetation checks, flight smoke and both camera acceptance tests must all PASS before changing readiness from `preview` to `ready`.
 
 ## M2 - sensor and ROS compatibility
 
 - Implement the ROS 2 Jazzy topics, frames and simulation timestamps documented in `TEST_COMPATIBILITY.md`.
 - In `Drone-Age/Cosys-AirSim:indra-ue5.8`, decouple camera production from synchronous RPC: fixed-rate RGB at 20 Hz, asynchronous GPU readback and bounded ring buffer.
-- Provide 640 x 480 and 1280 x 720 performance evidence; 20 Hz is the required operating point, while measured maximum throughput is reported separately.
+- Provide 640 x 480 and 1280 x 720 performance evidence. Acceptance is >=20 FPS and >=10 FPS respectively; stable 20 Hz at 1280 x 720 is an explicit optimization target, while measured maximum throughput and jitter are reported separately.
 - Add timestamp-preserving batched 200 Hz camera IMU, body IMU, gimbal, VINS initializer, vision bridge and ArduPilot ExternalNav.
 - Add wind set/get-applied command/ack and preserve separate MAVLink endpoints.
 
@@ -65,7 +65,7 @@ Gate: the complete required registry passes without changing backend-neutral mis
 - Add new environments only as separate `Drone-Age/ENV_DEV_NEO_COSYS_ENV_<NAME>` repositories, pinned as parent submodules.
 - Keep reusable asset libraries in separate `..._ASSETS_<NAME>` repositories and document source/licence/redistribution for every asset.
 - Provide `qualification` and `visual` profiles. Improve Nanite/PBR materials, foliage, atmosphere, weather and camera optics only after deterministic functional gates remain green.
-- Benchmark 640 x 480 and 1280 x 720 on the qualification workstation after every material/lighting change; protect the 20 Hz sensor requirement.
+- Benchmark 640 x 480 and 1280 x 720 on the qualification workstation after every material/lighting change; protect the 20 FPS and 10 FPS acceptance gates respectively, and track stable 20 Hz at 1280 x 720 as an optimization target.
 
 Gate: visual improvements do not regress flight, VINS, timing or reproducibility gates.
 

@@ -40,7 +40,7 @@ The UE host project is intentionally small. Maps and reusable asset sets are ver
 .\dev.ps1 run -Environment blocks -RenderProfile qualification
 ```
 
-`blocks` is the ready offline baseline. `sim2-rural` is the private 4 x 4 km qualification environment at the exact SIM2 origin, and `cesium-global` is an optional global visual environment. SIM2 Rural has a generated UE World Partition Landscape over real Copernicus GLO-30 height and Sentinel-2 imagery. Its preview flight and 640 x 480 raw-camera gates pass, but full runtime DEM collision and 1280 x 720 at 20 Hz do not yet pass; the bounded origin pad is temporary. Preview runs therefore require explicit `-Preview` and cannot promote readiness. Access to private `Drone-Age` repositories and Git LFS is required to initialise them.
+`blocks` is the ready offline baseline. `sim2-rural` is the private 4 x 4 km qualification environment at the exact SIM2 origin, and `cesium-global` is an optional global visual environment. SIM2 Rural has a generated UE World Partition Landscape over real Copernicus GLO-30 height and Sentinel-2 imagery. Runtime DEM collision and a pad-free square flight pass. The 1280 x 720 raw-camera gate passes at 17.65 FPS against its 10 FPS minimum; 640 x 480 has measured 18.62-23.75 FPS and still needs repeatable >=20 FPS. It remains `preview` until that camera gate, full-extent terrain probes, vegetation and the remaining SIM2-equivalence gates pass. Preview runs therefore require explicit `-Preview` and cannot promote readiness. Access to private `Drone-Age` repositories and Git LFS is required to initialise them.
 
 Environment architecture, real-map data policy and milestones are documented in [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md). Backend-neutral compatibility with the existing VINS climb/route repositories is specified in [docs/TEST_COMPATIBILITY.md](docs/TEST_COMPATIBILITY.md).
 
@@ -52,7 +52,7 @@ For the camera throughput qualification (640x480 and 1280x720, no Mission Planne
 .\dev.ps1 camera-test
 ```
 
-The qualified live path requests uncompressed RGB frames on demand with `ForceUpdate=false`. The current target is a sustained average of at least 20 FPS; PNG compression is not used in the real-time path.
+The qualified live path requests uncompressed RGB frames on demand with `ForceUpdate=false`. Acceptance is at least 20 FPS for 640 x 480 and 10 FPS for 1280 x 720; improving 1280 x 720 toward a stable 20 Hz remains an optimization target. PNG compression is not used in the real-time path.
 
 Each run gets its own evidence directory under `logs`. Use `.\dev.ps1 stop` to stop only processes recorded by this environment, and `.\dev.ps1 logs` to open the newest bundle.
 

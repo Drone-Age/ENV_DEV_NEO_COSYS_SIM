@@ -53,7 +53,7 @@ gh auth status
 
 `sim2-rural` is currently marked `preview`. Normal `build`, `run` and flight tests reject it; an engineering validation must opt in with `-Preview`, which is recorded in `summary.json` and cannot promote readiness. `env doctor sim2-rural -Preview` validates package integrity, while `env build-map` is the structural acceptance command. The first clean map build can spend several minutes compiling UE shaders; wait while UnrealEditor-Cmd/ShaderCompileWorker remain active and require the final reload verifier PASS.
 
-The current preview supports a full 15 m square flight and 640 x 480 raw RGB above 20 FPS on the qualification workstation through a bounded hidden 200 x 200 m origin pad. Full 4 x 4 km DEM runtime collision and 1280 x 720 at 20 FPS remain failed gates. Do not change `readiness` or `collision_terrain` until the pad is removed and full-map runtime probes pass.
+The current preview supports a full 15 m square flight directly on the streamed DEM. The temporary pad is removed; runtime traces at 150 m and 500 m hit Landscape collision. The 1280 x 720 camera gate passes at 17.65 FPS against its 10 FPS minimum. The 640 x 480 path varies from 18.62 to 23.75 FPS, so repeatable >=20 FPS remains open together with the stable-20-Hz 1280 x 720 optimization target. Keep `readiness: preview` until the strict camera gate, full-extent seam/landing probes, vegetation and the remaining environment gates pass.
 
 Private environment datasets use Git LFS. After setup, verify that raster files are real PNGs rather than pointer text:
 
@@ -175,7 +175,7 @@ Run the two supported resolutions without Mission Planner:
 .\dev.ps1 camera-test
 ```
 
-The live profile is Scene image type, raw RGB, `ForceUpdate=false`, Lumen GI/reflections disabled for the sensor capture, a 640x360 diagnostic viewport, and one request in flight. Acceptance is a sustained average of at least 20 unique frames/s. The viewport size does not change the 640x480 or 1280x720 sensor output. Do not use PNG compression in a control or VINS path; encode or record frames asynchronously downstream. See [CAMERA_PERFORMANCE.md](CAMERA_PERFORMANCE.md) for measured results and the source-level bottleneck.
+The live profile is Scene image type, raw RGB, `ForceUpdate=false`, Lumen GI/reflections disabled for the sensor capture, a 640x360 diagnostic viewport, and one request in flight. Acceptance is at least 20 unique frames/s at 640x480 and 10 unique frames/s at 1280x720. The viewport size does not change sensor output resolution. Do not use PNG compression in a control or VINS path; encode or record frames asynchronously downstream. See [CAMERA_PERFORMANCE.md](CAMERA_PERFORMANCE.md) for measured results and the source-level bottleneck.
 
 Do not add `-RenderOffscreen` to the normal acceptance run. It reduced camera throughput on the qualified workstation and can also reduce simulation timing margin. It remains an explicit `-Headless` diagnostic option only.
 

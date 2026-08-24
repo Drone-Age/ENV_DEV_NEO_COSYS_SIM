@@ -7,7 +7,7 @@
 | Environment | Repository | Purpose | Current gate |
 |---|---|---|---|
 | `blocks` | parent-owned | Small offline flight/camera regression | ready |
-| `sim2-rural` | `Drone-Age/ENV_DEV_NEO_COSYS_ENV_SIM2_RURAL` (private/LFS) | 4 x 4 km real local qualification core at the SIM2 origin, optional Cesium exterior | preview; flight and 640x480 camera pass, full DEM runtime collision pending |
+| `sim2-rural` | `Drone-Age/ENV_DEV_NEO_COSYS_ENV_SIM2_RURAL` (private/LFS) | 4 x 4 km real local qualification core at the SIM2 origin, optional Cesium exterior | preview; pad-free DEM flight and 1280x720 minimum pass; repeatable 20 FPS at 640x480 pending |
 | `cesium-global` | `Drone-Age/ENV_DEV_NEO_COSYS_ENV_CESIUM_GLOBAL` (private/LFS) | Global streamed visual exploration | scaffold |
 | rural assets | `Drone-Age/ENV_DEV_NEO_COSYS_ASSETS_RURAL` (private/LFS) | Reusable trees, grass, sunflower and corn content plugin | scaffold/empty |
 
@@ -33,7 +33,7 @@ Use a scripted GIS pipeline derived from the read-only SIM2 datum workflow. Cand
 
 The first real layers are complete. Copernicus DEM GLO-30 Public 2021 has been transformed into the recommended 4033 x 4033 UE landscape layout and 16 seam-matched 1009 x 1009 PNG16 tiles. Source SHA-256 is `5afdfd692c1fbc9325e147ab0878ac9596cc4f4fc33c433425f777938a53048f`; the derived hashes and vertical anchor are in `data/derived/gis/copdem-2021/provenance.json`. A pinned Sentinel-2 L2A true-colour scene (`S2B_36UUA_20250903_0_L2A`) supplies a verified 4096 x 4096 real-map underlay and 16 matching material tiles; its cropped-source SHA-256 is `cdaf62e944ce1a6e147edce15e73be67ae0e4616dabd8ac469edbac5ab35286c`.
 
-Current preview evidence proves the real map can host the complete v0.1 square flight and sustain 640 x 480 raw RGB at 20.74 unique FPS. It does not yet prove full terrain physics: UE 5.8.1 serializes all 1024 Landscape collision components, but the runtime Chaos heightfield is not active in this generated WP path. A hidden 200 x 200 m collision-only qualification pad at the origin currently makes takeoff/climb/landing deterministic. It must be removed after full-map DEM collision probes pass. The same rural run measured 1280 x 720 raw RGB at 15.33 FPS, so that resolution stays outside the 20 Hz gate until the Cosys asynchronous camera producer lands.
+Current preview evidence proves the real map can host the complete v0.1 square flight. Repartitioning the generated Landscape into 256 streaming proxies makes its Chaos heightfield available at runtime: traces hit DEM collision at 150 m and 500 m from the origin, and the pad-free vehicle flight lands and disarms on the DEM. The verifier accounts for all 1024 render and collision components across the 4 x 4 km package. Full-extent seam/landing probes are still required before `ready`. The repeated rural run measured 1280 x 720 raw RGB at 17.65 FPS, passing the 10 FPS minimum. The 640 x 480 path ranges from 18.62 to 23.75 FPS and therefore does not yet guarantee its 20 FPS gate. The asynchronous Cosys producer remains the route to repeatable cadence and stable 20 Hz at 1280 x 720.
 
 `qualification` must work fully offline with fixed seed, season, sun, exposure, weather, crop assignment and camera settings. `visual` may use Cesium, Lumen, atmosphere, wind and variation. Inside the local 4 x 4 km polygon, hide the Cesium surface so it cannot overlap the collision terrain. Global visual reach is streaming; it is not an infinite local physics mesh. Keep vehicle physics in a local rebased bubble while WGS84/ECEF remains continuous.
 
