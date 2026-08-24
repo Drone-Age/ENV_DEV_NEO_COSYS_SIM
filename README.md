@@ -38,7 +38,7 @@ The UE host project is intentionally small. Maps and reusable asset sets are ver
 .\dev.ps1 run -Environment blocks -RenderProfile qualification
 ```
 
-`blocks` is the ready offline baseline. `sim2-rural` is the private 4 x 4 km qualification environment at the exact SIM2 origin, and `cesium-global` is an optional global visual environment. The latter two currently advertise `readiness: scaffold`; the launcher rejects them until their real UE maps pass the environment acceptance gates. Access to private `Drone-Age` repositories is required to initialise them.
+`blocks` is the ready offline baseline. `sim2-rural` is the private 4 x 4 km qualification environment at the exact SIM2 origin, and `cesium-global` is an optional global visual environment. The real Copernicus GLO-30 heightmap set is now pinned in the rural repository, but the UE map and imagery are still incomplete; the latter two environments therefore remain `readiness: scaffold`. The launcher rejects them until their real UE maps pass the environment acceptance gates. Access to private `Drone-Age` repositories and Git LFS is required to initialise them.
 
 Environment architecture, real-map data policy and milestones are documented in [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md). Backend-neutral compatibility with the existing VINS climb/route repositories is specified in [docs/TEST_COMPATIBILITY.md](docs/TEST_COMPATIBILITY.md).
 

@@ -64,6 +64,32 @@ function Get-EnvironmentManifest {
         $requiredDescriptor = Join-Path $requiredPath ([string]$requiredPlugin.descriptor)
         if (-not (Test-Path -LiteralPath $requiredDescriptor -PathType Leaf)) { throw "Environment '$EnvironmentId' required plugin is missing: $requiredDescriptor" }
     }
+    foreach ($dataset in @($manifest.datasets)) {
+        $derivedManifestProperty = $dataset.psobject.Properties['derived_manifest']
+        if (-not $derivedManifestProperty) { continue }
+        $derivedManifest = Join-Path $directory ([string]$derivedManifestProperty.Value)
+        if (-not (Test-Path -LiteralPath $derivedManifest -PathType Leaf)) {
+            throw "Environment '$EnvironmentId' dataset '$($dataset.id)' is missing its derived manifest/LFS object: $derivedManifest"
+        }
+        if ($RequireReady) {
+            $provenance = Get-Content -Raw -LiteralPath $derivedManifest | ConvertFrom-Json
+            $records = @()
+            foreach ($layerName in @('height', 'imagery')) {
+                $layerProperty = $provenance.psobject.Properties[$layerName]
+                if (-not $layerProperty) { continue }
+                $fullProperty = $layerProperty.Value.psobject.Properties['full']
+                if ($fullProperty) { $records += $fullProperty.Value }
+                $tilesProperty = $layerProperty.Value.psobject.Properties['tiles']
+                if ($tilesProperty) { $records += @($tilesProperty.Value) }
+            }
+            foreach ($record in $records) {
+                $artifact = Join-Path (Split-Path -Parent $derivedManifest) ([string]$record.path)
+                if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) { throw "Environment '$EnvironmentId' derived artifact/LFS object is missing: $artifact" }
+                $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifact).Hash.ToLowerInvariant()
+                if ($actualHash -ne [string]$record.sha256) { throw "Environment '$EnvironmentId' derived artifact hash mismatch or unresolved LFS pointer: $artifact" }
+            }
+        }
+    }
     if ($RequireReady -and $manifest.readiness -ne 'ready') { throw "Environment '$EnvironmentId' readiness is '$($manifest.readiness)', not 'ready'." }
     if (-not $AllowScaffold -and -not $RequireReady -and $manifest.readiness -eq 'scaffold') { throw "Environment '$EnvironmentId' is only a scaffold." }
     return $manifest

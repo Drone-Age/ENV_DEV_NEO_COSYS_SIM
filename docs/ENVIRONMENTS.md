@@ -7,7 +7,7 @@
 | Environment | Repository | Purpose | Current gate |
 |---|---|---|---|
 | `blocks` | parent-owned | Small offline flight/camera regression | ready |
-| `sim2-rural` | `Drone-Age/ENV_DEV_NEO_COSYS_ENV_SIM2_RURAL` (private/LFS) | 4 x 4 km real local qualification core at the SIM2 origin, optional Cesium exterior | scaffold |
+| `sim2-rural` | `Drone-Age/ENV_DEV_NEO_COSYS_ENV_SIM2_RURAL` (private/LFS) | 4 x 4 km real local qualification core at the SIM2 origin, optional Cesium exterior | scaffold; real DEM ready |
 | `cesium-global` | `Drone-Age/ENV_DEV_NEO_COSYS_ENV_CESIUM_GLOBAL` (private/LFS) | Global streamed visual exploration | scaffold |
 | rural assets | `Drone-Age/ENV_DEV_NEO_COSYS_ASSETS_RURAL` (private/LFS) | Reusable trees, grass, sunflower and corn content plugin | scaffold/empty |
 
@@ -30,6 +30,8 @@ Lifecycle is `scaffold -> preview -> ready`. `build`, `run` and `test` accept on
 The exact WGS84 origin is `50.31821195033009, 31.137054110768155, 104 m AMSL`. Build a deterministic local 4 x 4 km collision surface with World Partition, Large World Coordinates, HLOD and Data Layers. The current climb and 10 km Gerono route fit within this core; the latter is accumulated path length, not a 10 km-wide map.
 
 Use a scripted GIS pipeline derived from the read-only SIM2 datum workflow. Candidate input classes are DEM, ortho/satellite imagery, OSM roads/buildings/water/land use and land-cover masks. Acquisition code must check current provider terms. Every dataset record includes source URL/product, provider, licence, timestamp, bounds, CRS, native resolution and SHA-256 of source and derived outputs.
+
+The first real layer is complete: Copernicus DEM GLO-30 Public 2021 has been transformed into the recommended 4033 x 4033 UE landscape layout and 16 seam-matched 1009 x 1009 PNG16 tiles. Source SHA-256 is `5afdfd692c1fbc9325e147ab0878ac9596cc4f4fc33c433425f777938a53048f`; the derived hashes and vertical anchor are in the rural submodule's `data/derived/gis/copdem-2021/provenance.json`. This proves the data pipeline, not UE map readiness.
 
 `qualification` must work fully offline with fixed seed, season, sun, exposure, weather, crop assignment and camera settings. `visual` may use Cesium, Lumen, atmosphere, wind and variation. Inside the local 4 x 4 km polygon, hide the Cesium surface so it cannot overlap the collision terrain. Global visual reach is streaming; it is not an infinite local physics mesh. Keep vehicle physics in a local rebased bubble while WGS84/ECEF remains continuous.
 

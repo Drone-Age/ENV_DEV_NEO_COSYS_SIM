@@ -50,6 +50,13 @@ gh auth status
 
 `env doctor` will reject a package marked `scaffold`; this is expected until its real `.umap` and datasets have passed their own acceptance gate.
 
+Private environment datasets use Git LFS. After setup, verify that raster files are real PNGs rather than pointer text:
+
+```powershell
+git -C environments\sim2-rural lfs pull
+.\dev.ps1 env list
+```
+
 The VINS qualification repositories are also private and are not needed for v0.1. Initialise them only on a qualification workstation:
 
 ```powershell
