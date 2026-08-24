@@ -7,6 +7,7 @@ param(
     [switch]$NoMissionPlanner,
     [switch]$Headless,
     [switch]$SkipBuild,
+    [switch]$Preview,
     [switch]$Json,
     [string]$RunId = '',
     [string]$FlightLogDirectory = '',
@@ -61,7 +62,10 @@ function Invoke-EnvironmentList {
 function Invoke-EnvironmentDoctor([string]$EnvironmentId) {
     Write-Step "Checking environment '$EnvironmentId'"
     try {
-        $manifest = Get-EnvironmentManifest -EnvironmentId $EnvironmentId -RequireReady
+        $manifest = Get-RuntimeEnvironmentManifest -EnvironmentId $EnvironmentId -Preview:$Preview
+        if ($manifest.readiness -eq 'preview') {
+            Write-Warn 'Readiness' 'preview explicitly authorized; doctor validates package integrity, not promotion gates'
+        }
         Write-Pass 'Manifest' "schema $($manifest.schema), version $($manifest.version)"
         Write-Pass 'Unreal compatibility' ($manifest.compatibility.unreal_engine -join ', ')
         Write-Pass 'Map' $manifest.map_path
@@ -150,8 +154,8 @@ function Write-Capabilities {
             camera_imu_batched = $false
         }
         commands = [ordered]@{
-            run = @('-Environment', '-RenderProfile', '-Headless', '-NoMissionPlanner')
-            test = @('-Environment', '-RenderProfile')
+            run = @('-Environment', '-RenderProfile', '-Headless', '-NoMissionPlanner', '-Preview')
+            test = @('-Environment', '-RenderProfile', '-Preview')
             qualification_accepted_args = @('-RunId', '-FlightLogDirectory', '-Rosbag', '-FlightQualification', '-FlightQualificationLimitM', '-FlightQualificationProfile', '-FlightQualificationNoWind', '-FlightQualificationNoVisualUi', '-RouteQualification', '-RouteQualificationProfile', '-VinsConfigFile', '-Distro', '-WithMissionPlanner')
         }
     }
@@ -286,7 +290,7 @@ function Invoke-Setup {
 }
 
 function Invoke-Build {
-    $environmentManifest = Get-EnvironmentManifest -EnvironmentId $Environment -RequireReady
+    $environmentManifest = Get-RuntimeEnvironmentManifest -EnvironmentId $Environment -Preview:$Preview
     $ue = Get-UeRoot
     $vs = Get-VsInstallPath
     $msvc = Get-MsvcVersion $vs
@@ -326,7 +330,10 @@ function Invoke-Build {
 
 function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner) {
     if ($Distro -ne $script:Lock.platform.wsl_distribution) { throw "This pinned bundle requires WSL distribution '$($script:Lock.platform.wsl_distribution)', received '$Distro'." }
-    $environmentManifest = Get-EnvironmentManifest -EnvironmentId $Environment -RequireReady
+    $environmentManifest = Get-RuntimeEnvironmentManifest -EnvironmentId $Environment -Preview:$Preview
+    if ($environmentManifest.readiness -eq 'preview') {
+        Write-Warn 'Preview environment' 'runtime evidence is diagnostic and cannot promote the environment to ready by itself'
+    }
     Stage-EnvironmentPlugin -Manifest $environmentManifest
     if (-not $SkipBuild) {
         $plugin = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Plugins\AirSim\AirSim.uplugin'
@@ -411,7 +418,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner) {
         cosys_commit = $script:Lock.submodules.'third_party/Cosys-AirSim'.commit
         ardupilot_commit = $script:Lock.submodules.'third_party/ardupilot'.commit
         ue = $script:Lock.platform.unreal_engine; settings = $settings.Path
-        environment = [ordered]@{ id = $environmentManifest.id; version = $environmentManifest.version; map = $environmentManifest.map_path; render_profile = $RenderProfile }
+        environment = [ordered]@{ id = $environmentManifest.id; version = $environmentManifest.version; readiness = $environmentManifest.readiness; preview_authorized = [bool]$Preview; map = $environmentManifest.map_path; render_profile = $RenderProfile }
         endpoints = $script:Config.ports; network = $settings.Network
     }
     Write-JsonFile $metadata (Join-Path $runDirectory 'summary.json')
@@ -466,9 +473,9 @@ switch ($Command) {
     'test' { Assert-QualificationCapabilities; Invoke-SmokeTest }
     'camera-test' {
         Write-Step 'Qualifying the 20 FPS raw-RGB camera profile (Mission Planner is not started)'
-        & (Join-Path $PSScriptRoot 'camera-benchmark.ps1') -Width 640 -Height 480 -DurationSeconds 20
+        & (Join-Path $PSScriptRoot 'camera-benchmark.ps1') -Width 640 -Height 480 -DurationSeconds 20 -Environment $Environment -RenderProfile $RenderProfile -Preview:$Preview
         if ($LASTEXITCODE -ne 0) { throw '640x480 camera benchmark failed.' }
-        & (Join-Path $PSScriptRoot 'camera-benchmark.ps1') -Width 1280 -Height 720 -DurationSeconds 20
+        & (Join-Path $PSScriptRoot 'camera-benchmark.ps1') -Width 1280 -Height 720 -DurationSeconds 20 -Environment $Environment -RenderProfile $RenderProfile -Preview:$Preview
         if ($LASTEXITCODE -ne 0) { throw '1280x720 camera benchmark failed.' }
     }
     'stop' {

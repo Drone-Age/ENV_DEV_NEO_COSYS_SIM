@@ -10,7 +10,7 @@
       "submodule": "environments/sim2-rural",
       "repository": "https://github.com/Drone-Age/ENV_DEV_NEO_COSYS_ENV_SIM2_RURAL.git",
       "visibility": "private",
-      "commit": "a5cb94426c10ef456b967322c9913a87279da24d"
+      "commit": "6fc883036e60008371ccb0eef470938b84686e93"
     },
     "cesium-global": {
       "kind": "git-submodule",

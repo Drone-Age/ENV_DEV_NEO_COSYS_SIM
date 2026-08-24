@@ -95,22 +95,48 @@ function Get-EnvironmentManifest {
     return $manifest
 }
 
+function Get-RuntimeEnvironmentManifest {
+    param(
+        [Parameter(Mandatory)][string]$EnvironmentId,
+        [switch]$Preview
+    )
+    if (-not $Preview) {
+        return Get-EnvironmentManifest -EnvironmentId $EnvironmentId -RequireReady
+    }
+    $manifest = Get-EnvironmentManifest -EnvironmentId $EnvironmentId
+    if ($manifest.readiness -notin @('preview', 'ready')) {
+        throw "Environment '$EnvironmentId' readiness is '$($manifest.readiness)'; -Preview permits only preview or ready environments."
+    }
+    return $manifest
+}
+
 function Stage-EnvironmentPlugin([object]$Manifest) {
     $projectPluginsRoot = [IO.Path]::GetFullPath((Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Plugins'))
     $stagingRoot = [IO.Path]::GetFullPath((Join-Path $projectPluginsRoot 'Environments'))
     if (-not $stagingRoot.StartsWith($projectPluginsRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $stagingRoot) -ne 'Environments') {
         throw "Unsafe environment staging path: $stagingRoot"
     }
-    if (Test-Path -LiteralPath $stagingRoot) { Remove-Item -LiteralPath $stagingRoot -Recurse -Force }
     $plugins = @()
     if ($Manifest.content_plugin.path) { $plugins += $Manifest.content_plugin }
     $requiredPluginsProperty = $Manifest.psobject.Properties['required_plugins']
     if ($requiredPluginsProperty) { $plugins += @($requiredPluginsProperty.Value) }
+    New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
+    $desiredNames = @($plugins | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension([string]$_.descriptor) })
+    foreach ($existing in Get-ChildItem -LiteralPath $stagingRoot -Directory -ErrorAction SilentlyContinue) {
+        if ($desiredNames -contains $existing.Name) { continue }
+        $existingPath = [IO.Path]::GetFullPath($existing.FullName)
+        if (-not $existingPath.StartsWith($stagingRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unsafe staged plugin cleanup path: $existingPath"
+        }
+        Remove-Item -LiteralPath $existingPath -Recurse -Force
+    }
     foreach ($plugin in $plugins) {
         $source = Join-Path (Join-Path $script:EnvironmentsRoot $Manifest.id) ([string]$plugin.path)
         $name = [IO.Path]::GetFileNameWithoutExtension([string]$plugin.descriptor)
         $target = Join-Path $stagingRoot $name
         New-Item -ItemType Directory -Force -Path $target | Out-Null
+        # Keep locally generated module products. A runtime launch must not erase
+        # the Editor DLL that Invoke-Build or env build-map just produced.
         & robocopy.exe $source $target /MIR /XD Binaries Intermediate Saved DerivedDataCache /NFL /NDL /NJH /NJS /NP | Out-Null
         if ($LASTEXITCODE -ge 8) { throw "Environment plugin '$name' staging failed with robocopy code $LASTEXITCODE." }
     }

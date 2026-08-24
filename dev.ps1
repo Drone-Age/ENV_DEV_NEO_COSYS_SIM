@@ -13,6 +13,7 @@ param(
     [switch]$NoMissionPlanner,
     [switch]$Headless,
     [switch]$SkipBuild,
+    [switch]$Preview,
     [switch]$Json,
     [string]$RunId = '',
     [string]$FlightLogDirectory = '',

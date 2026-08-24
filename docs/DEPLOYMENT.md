@@ -45,12 +45,15 @@ Do not begin with `--recurse-submodules` on a machine that has not authenticated
 ```powershell
 gh auth status
 .\dev.ps1 setup -Environment sim2-rural
+.\dev.ps1 env doctor sim2-rural -Preview
 .\dev.ps1 env build-map sim2-rural
 ```
 
 `env build-map` compiles the environment-owned UE editor commandlet, deterministically recreates the 4033 x 4033 World Partition map from the pinned Copernicus/Sentinel-2 inputs, then reloads it and verifies the georeference, transform, imagery material and all 1024 render/collision components. The command is safe to repeat after a clean clone. The generated `.umap`/`.uasset` files are also pinned through Git LFS so ordinary consumers do not need to regenerate them.
 
-`sim2-rural` is currently marked `preview`. Therefore `env doctor sim2-rural`, `build`, `run` and flight tests intentionally reject it until vegetation and the runtime flight/camera gates pass. This prevents a structurally valid map from being mistaken for a qualified environment. `env build-map` is the dedicated structural acceptance command during this stage.
+`sim2-rural` is currently marked `preview`. Normal `build`, `run` and flight tests reject it; an engineering validation must opt in with `-Preview`, which is recorded in `summary.json` and cannot promote readiness. `env doctor sim2-rural -Preview` validates package integrity, while `env build-map` is the structural acceptance command. The first clean map build can spend several minutes compiling UE shaders; wait while UnrealEditor-Cmd/ShaderCompileWorker remain active and require the final reload verifier PASS.
+
+The current preview supports a full 15 m square flight and 640 x 480 raw RGB above 20 FPS on the qualification workstation through a bounded hidden 200 x 200 m origin pad. Full 4 x 4 km DEM runtime collision and 1280 x 720 at 20 FPS remain failed gates. Do not change `readiness` or `collision_terrain` until the pad is removed and full-map runtime probes pass.
 
 Private environment datasets use Git LFS. After setup, verify that raster files are real PNGs rather than pointer text:
 

@@ -18,13 +18,17 @@ Gate: repeat the Blocks smoke after every launcher, Cosys or sensor-path change.
 ## M1 - real SIM2-location environment
 
 - [done] Build `/Sim2Rural/Maps/SIM2_Rural_WP` from the pinned Copernicus DEM and Sentinel-2 products at `50.31821195033009, 31.137054110768155, 104 m AMSL`.
-- [done] Create a deterministic 4 x 4 km World Partition/LWC collision core with 1024 verified render and collision components.
+- [done] Create a deterministic 4 x 4 km World Partition/LWC visual core with 1024 verified render and serialized heightfield-collision components.
+- [done] Pass the 15 m square flight in the real map (`2026-08-24_204647_test_6c00d140`): heartbeat, sensor exchange, healthy EKF, ARM, all waypoints, LAND and DISARM; maximum altitude 5.71 m.
+- [done] Sustain 640 x 480 raw RGB at 20.74 unique FPS with zero duplicate timestamps (`2026-08-24_205010_camera-sim2-rural-640x480_42cfbbd9`).
+- [blocked gate] UE 5.8.1 loads the generated Landscape collision objects but Chaos does not instantiate a usable runtime heightfield in this commandlet-generated WP path. Preview flights therefore use a hidden, bounded 200 x 200 m qualification pad at the origin. Replace it with verified full DEM collision before `ready`.
+- [blocked gate] 1280 x 720 raw RGB currently reaches 15.33 unique FPS in rural, below the 20 Hz target. This resolution requires the asynchronous producer in M2; 640 x 480 is the qualified current profile.
 - Add georeferencing, landscape material, roads/land-use masks, performant grass, several tree variants, sunflower/corn field representation, HLOD and collision checks.
 - Keep `qualification` offline and reproducible. Keep `visual` separately configurable.
 - Attach `cesium-global` outside the local qualification polygon for effectively unbounded streamed WGS84/ECEF exploration. The local core remains authoritative for flight physics and test collision; Cesium is not treated as an infinite deterministic physics mesh.
 - Pass the existing 15 m square in Blocks and SIM2 Rural with equivalent vehicle behaviour and at least 20 unique 640 x 480 camera frames/s.
 
-Structural subgate: `env build-map sim2-rural` now regenerates and reload-verifies the map, exact georeference, Sentinel-2 material, World Partition layout and full collision component count. Runtime gate: `env doctor sim2-rural`, origin/elevation measurement, seam probes, vegetation checks, flight smoke and 20 Hz camera test must all PASS before changing readiness from `preview` to `ready`.
+Structural subgate: `env build-map sim2-rural` now regenerates and reload-verifies the map, exact georeference, Sentinel-2 material, World Partition layout, collision data and the bounded preview pad. Runtime gate: `env doctor sim2-rural`, full 4 x 4 km physics line traces/landing probes against DEM (with the pad removed), origin/elevation measurement, seam probes, vegetation checks, flight smoke and 20 Hz 640 x 480 camera test must all PASS before changing readiness from `preview` to `ready`.
 
 ## M2 - sensor and ROS compatibility
 
@@ -38,9 +42,11 @@ Gate: topic conformance, 20 Hz camera cadence, 190-210 Hz camera IMU, camera-nea
 
 ## M3 - existing climb test compatibility
 
-- Extend `ENV_DEV_NEO_SIM_TEST_VINS_CLIMB` only with backend capability negotiation and backend configuration; preserve `run-test.cmd`, profiles, controller and verdict logic.
+- Pin `ENV_DEV_NEO_SIM_TEST_VINS_CLIMB` v2.0.0 commit `10b3f4717ee599b99a4bfdba4fca29869661ca37` as `tests/vins_climb_unit`; preserve `run-test.cmd`, schema-2 profiles, controller and verdict logic. Extend it only with backend capability negotiation and backend configuration.
 - Run the exact pinned commit first against SIM2, then against Cosys/Unreal.
-- Qualify in order: stationary sensor test, arm/hover, 25 m climb smoke, then the full climb profile with 25 m steps up to 1000 m, staged wind, Source Set 2 primary and GNSS standby.
+- Qualify in order: `-PrintOnly` contract validation, stationary topic/timestamp test, ground admission, arm/hover, `profile-smoke.json` 25 m climb, then `profile.json` with 25 m steps up to 1000 m.
+- Preserve its admission rules: finite VINS odometry >=4 Hz, >=15 features, bridge and `/mavros/odometry/out` READY for 2 s, Source Set 2 confirmed and settled for 10 s before ARM, Source Set 1/GNSS standby fallback, LOITER throughout normal qualification.
+- Preserve wind semantics exactly: command IDs and applied acknowledgements within 5 s; 5->10 m/s smoke at 25 m; from 100 m four 18 m/s N/S/N/S gusts; additional tiered gusts through 1000 m. LAND and DISARM must occur on Source Set 2 for PASS.
 - Record MCAP, DataFlash, parameters, routes, timestamps and immutable JSON/PDF verdicts.
 
 Gate: both backends PASS the same climb-test commit and differences fall within explicitly versioned tolerances. A Cosys-only fork of the test is not accepted.
@@ -62,6 +68,8 @@ Gate: the complete required registry passes without changing backend-neutral mis
 - Benchmark 640 x 480 and 1280 x 720 on the qualification workstation after every material/lighting change; protect the 20 Hz sensor requirement.
 
 Gate: visual improvements do not regress flight, VINS, timing or reproducibility gates.
+
+The first full environment is a composition, not one unbounded monolithic map: `sim2-rural` is the offline authoritative 4 x 4 km test/physics core at the SIM2 coordinates, while the separately versioned `cesium-global` package supplies streamed real-world space outside it. Unreal/LWC removes ordinary world-coordinate limits, but network-streamed Cesium terrain is visual/non-deterministic and cannot replace the local qualification collision mesh.
 
 ## Release sequence
 

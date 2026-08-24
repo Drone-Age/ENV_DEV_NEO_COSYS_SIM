@@ -6,6 +6,9 @@ param(
     [ValidateRange(0, 240)][double]$MinRawFps = 20,
     [ValidateRange(320, 3840)][int]$ViewportWidth = 640,
     [ValidateRange(240, 2160)][int]$ViewportHeight = 360,
+    [ValidatePattern('^[a-z0-9][a-z0-9-]*$')][string]$Environment = 'blocks',
+    [ValidateSet('qualification', 'visual')][string]$RenderProfile = 'qualification',
+    [switch]$Preview,
     [switch]$Offscreen,
     [switch]$ForceUpdate,
     [switch]$WindowsClient
@@ -15,8 +18,13 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 if (Get-ActiveRun) { throw 'An environment run is already active. Use .\dev.ps1 stop first.' }
+$environmentManifest = Get-RuntimeEnvironmentManifest -EnvironmentId $Environment -Preview:$Preview
+Stage-EnvironmentPlugin -Manifest $environmentManifest
+if ($environmentManifest.readiness -eq 'preview') {
+    Write-Warn 'Preview environment' 'camera evidence is diagnostic until all environment gates pass'
+}
 
-$runDirectory = New-RunDirectory "camera-$($Width)x$Height"
+$runDirectory = New-RunDirectory "camera-$Environment-$($Width)x$Height"
 try {
     $settingsInfo = New-AirSimSettings $runDirectory
     $settings = Get-Content -Raw -LiteralPath $settingsInfo.Path | ConvertFrom-Json
@@ -39,10 +47,11 @@ try {
     $ueLog = Join-Path $runDirectory 'unreal\Unreal.log'
     $arguments = @(
         $project,
-        '/Game/FlyingCPP/Maps/FlyingExampleMap',
+        $environmentManifest.map_path,
         '-game', '-windowed', '-Unattended', '-NoSplash',
         "-ResX=$ViewportWidth", "-ResY=$ViewportHeight",
-        "-abslog=$ueLog", "-settings=$($settingsInfo.Path)"
+        "-abslog=$ueLog", "-settings=$($settingsInfo.Path)",
+        "-IndraRenderProfile=$RenderProfile", "-IndraEnvironment=$($environmentManifest.id)"
     )
     if ($Offscreen) { $arguments += '-RenderOffscreen' }
     $ueProcess = Start-Process -FilePath $editor -ArgumentList $arguments -WorkingDirectory (Split-Path -Parent $project) -PassThru

@@ -7,7 +7,7 @@
 | Environment | Repository | Purpose | Current gate |
 |---|---|---|---|
 | `blocks` | parent-owned | Small offline flight/camera regression | ready |
-| `sim2-rural` | `Drone-Age/ENV_DEV_NEO_COSYS_ENV_SIM2_RURAL` (private/LFS) | 4 x 4 km real local qualification core at the SIM2 origin, optional Cesium exterior | preview; World Partition/DEM/imagery/collision verified |
+| `sim2-rural` | `Drone-Age/ENV_DEV_NEO_COSYS_ENV_SIM2_RURAL` (private/LFS) | 4 x 4 km real local qualification core at the SIM2 origin, optional Cesium exterior | preview; flight and 640x480 camera pass, full DEM runtime collision pending |
 | `cesium-global` | `Drone-Age/ENV_DEV_NEO_COSYS_ENV_CESIUM_GLOBAL` (private/LFS) | Global streamed visual exploration | scaffold |
 | rural assets | `Drone-Age/ENV_DEV_NEO_COSYS_ASSETS_RURAL` (private/LFS) | Reusable trees, grass, sunflower and corn content plugin | scaffold/empty |
 
@@ -18,12 +18,12 @@ The rural environment includes the asset repository as a nested submodule. It do
 ```powershell
 .\dev.ps1 env list
 .\dev.ps1 setup -Environment sim2-rural
-.\dev.ps1 env doctor sim2-rural
+.\dev.ps1 env doctor sim2-rural -Preview
 .\dev.ps1 build -Environment sim2-rural
 .\dev.ps1 run -Environment sim2-rural -RenderProfile qualification
 ```
 
-Lifecycle is `scaffold -> preview -> ready`. `build`, `run` and `test` accept only `ready`. `env list` can display every installed state, and `env doctor` is the authoritative readiness check. The manifest schema lives at `contracts/environment.schema.json`.
+Lifecycle is `scaffold -> preview -> ready`. Normal `build`, `run` and `test` accept `ready`; deliberate engineering validation of a `preview` package requires the explicit `-Preview` switch and records that fact in evidence. A `scaffold` can never run. `env list` displays every installed state, and `env doctor` is the authoritative readiness check. The manifest schema lives at `contracts/environment.schema.json`.
 
 ## SIM2 rural implementation
 
@@ -31,7 +31,9 @@ The exact WGS84 origin is `50.31821195033009, 31.137054110768155, 104 m AMSL`. B
 
 Use a scripted GIS pipeline derived from the read-only SIM2 datum workflow. Candidate input classes are DEM, ortho/satellite imagery, OSM roads/buildings/water/land use and land-cover masks. Acquisition code must check current provider terms. Every dataset record includes source URL/product, provider, licence, timestamp, bounds, CRS, native resolution and SHA-256 of source and derived outputs.
 
-The first real layers are complete. Copernicus DEM GLO-30 Public 2021 has been transformed into the recommended 4033 x 4033 UE landscape layout and 16 seam-matched 1009 x 1009 PNG16 tiles. Source SHA-256 is `5afdfd692c1fbc9325e147ab0878ac9596cc4f4fc33c433425f777938a53048f`; the derived hashes and vertical anchor are in `data/derived/gis/copdem-2021/provenance.json`. A pinned Sentinel-2 L2A true-colour scene (`S2B_36UUA_20250903_0_L2A`) supplies a verified 4096 x 4096 real-map underlay and 16 matching material tiles; its cropped-source SHA-256 is `cdaf62e944ce1a6e147edce15e73be67ae0e4616dabd8ac469edbac5ab35286c`. This proves the reproducible data pipeline, not UE map readiness.
+The first real layers are complete. Copernicus DEM GLO-30 Public 2021 has been transformed into the recommended 4033 x 4033 UE landscape layout and 16 seam-matched 1009 x 1009 PNG16 tiles. Source SHA-256 is `5afdfd692c1fbc9325e147ab0878ac9596cc4f4fc33c433425f777938a53048f`; the derived hashes and vertical anchor are in `data/derived/gis/copdem-2021/provenance.json`. A pinned Sentinel-2 L2A true-colour scene (`S2B_36UUA_20250903_0_L2A`) supplies a verified 4096 x 4096 real-map underlay and 16 matching material tiles; its cropped-source SHA-256 is `cdaf62e944ce1a6e147edce15e73be67ae0e4616dabd8ac469edbac5ab35286c`.
+
+Current preview evidence proves the real map can host the complete v0.1 square flight and sustain 640 x 480 raw RGB at 20.74 unique FPS. It does not yet prove full terrain physics: UE 5.8.1 serializes all 1024 Landscape collision components, but the runtime Chaos heightfield is not active in this generated WP path. A hidden 200 x 200 m collision-only qualification pad at the origin currently makes takeoff/climb/landing deterministic. It must be removed after full-map DEM collision probes pass. The same rural run measured 1280 x 720 raw RGB at 15.33 FPS, so that resolution stays outside the 20 Hz gate until the Cosys asynchronous camera producer lands.
 
 `qualification` must work fully offline with fixed seed, season, sun, exposure, weather, crop assignment and camera settings. `visual` may use Cesium, Lumen, atmosphere, wind and variation. Inside the local 4 x 4 km polygon, hide the Cesium surface so it cannot overlap the collision terrain. Global visual reach is streaming; it is not an infinite local physics mesh. Keep vehicle physics in a local rebased bubble while WGS84/ECEF remains continuous.
 
@@ -52,7 +54,7 @@ The old projects under `D:\FILES\Kkovalenko\OneDrive\UnrealEngine\AirSim\Environ
 The rural manifest may become `ready` only when:
 
 1. `/Sim2Rural/Maps/SIM2_Rural_WP` exists and loads with no missing dependency or redirector.
-2. The measured origin and elevation are documented; collision covers the full 4 x 4 km core.
+2. The measured origin and elevation are documented; runtime line traces, spawn/landing probes and vehicle collision cover the full 4 x 4 km DEM core, and the temporary qualification pad is removed.
 3. The v0.1 15 m flight passes in Blocks and rural with equivalent vehicle behaviour.
 4. Qualification starts offline and is reproducible; visual mode gracefully reports missing Cesium credentials/network.
 5. 640 x 480 camera output sustains at least 20 unique simulation frames/s on the qualification workstation.
