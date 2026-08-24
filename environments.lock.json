@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "environments": {
+    "blocks": {
+      "kind": "builtin",
+      "path": "environments/blocks"
+    },
+    "sim2-rural": {
+      "kind": "git-submodule",
+      "submodule": "environments/sim2-rural",
+      "repository": "https://github.com/Drone-Age/ENV_DEV_NEO_COSYS_ENV_SIM2_RURAL.git",
+      "visibility": "private",
+      "commit": "d4cb29b35406c5c506bd9fbcb4d115925deefc56"
+    },
+    "cesium-global": {
+      "kind": "git-submodule",
+      "submodule": "environments/cesium-global",
+      "repository": "https://github.com/Drone-Age/ENV_DEV_NEO_COSYS_ENV_CESIUM_GLOBAL.git",
+      "visibility": "private",
+      "commit": "b7e38a3c5f7b3aef495f42785fa231cb6b2b0f68"
+    }
+  }
+}

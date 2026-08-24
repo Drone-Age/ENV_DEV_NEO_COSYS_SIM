@@ -1,0 +1,40 @@
+{
+  "$schema": "../../contracts/environment.schema.json",
+  "schema": 1,
+  "id": "blocks",
+  "version": "0.1.0",
+  "readiness": "ready",
+  "compatibility": {
+    "unreal_engine": ["5.8.1"],
+    "cosys_airsim": ["3.4.1"]
+  },
+  "map_path": "/Game/FlyingCPP/Maps/FlyingExampleMap",
+  "wgs84_origin": {
+    "latitude": 50.31821195033009,
+    "longitude": 31.137054110768155,
+    "altitude_m_amsl": 104.0
+  },
+  "content_plugin": {
+    "path": null,
+    "descriptor": null
+  },
+  "profiles": {
+    "qualification": {
+      "deterministic": true,
+      "requires_network": false
+    },
+    "visual": {
+      "deterministic": false,
+      "requires_network": false
+    }
+  },
+  "capabilities": {
+    "offline": true,
+    "global_streaming": false,
+    "collision_terrain": true,
+    "world_partition": false,
+    "large_world_coordinates": false,
+    "wind": false
+  },
+  "datasets": []
+}

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Drone-Age/ENV_DEV_NEO_COSYS_SIM/contracts/environment.schema.json",
+  "title": "INDRA Cosys environment package",
+  "type": "object",
+  "required": ["schema", "id", "version", "readiness", "compatibility", "map_path", "wgs84_origin", "content_plugin", "profiles", "capabilities", "datasets"],
+  "properties": {
+    "schema": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "version": { "type": "string" },
+    "readiness": { "enum": ["scaffold", "preview", "ready"] },
+    "compatibility": {
+      "type": "object",
+      "required": ["unreal_engine", "cosys_airsim"],
+      "properties": {
+        "unreal_engine": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "cosys_airsim": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      }
+    },
+    "map_path": { "type": "string", "pattern": "^/" },
+    "wgs84_origin": {
+      "type": "object",
+      "required": ["latitude", "longitude", "altitude_m_amsl"],
+      "properties": {
+        "latitude": { "type": "number", "minimum": -90, "maximum": 90 },
+        "longitude": { "type": "number", "minimum": -180, "maximum": 180 },
+        "altitude_m_amsl": { "type": "number" }
+      }
+    },
+    "content_plugin": {
+      "type": "object",
+      "required": ["path", "descriptor"],
+      "properties": {
+        "path": { "type": ["string", "null"] },
+        "descriptor": { "type": ["string", "null"] }
+      }
+    },
+    "required_plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "descriptor"],
+        "properties": {
+          "path": { "type": "string" },
+          "descriptor": { "type": "string" }
+        }
+      }
+    },
+    "profiles": { "type": "object", "required": ["qualification", "visual"] },
+    "capabilities": { "type": "object", "required": ["offline", "global_streaming", "collision_terrain"] },
+    "datasets": { "type": "array" }
+  },
+  "additionalProperties": true
+}

@@ -1,9 +1,26 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'stop', 'logs')][string]$Command,
+    [Parameter(Mandatory)][ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'stop', 'logs', 'env', 'capabilities')][string]$Command,
+    [ValidateSet('list', 'doctor')][string]$EnvironmentCommand = 'list',
+    [string]$Environment = 'blocks',
+    [ValidateSet('qualification', 'visual')][string]$RenderProfile = 'qualification',
     [switch]$NoMissionPlanner,
     [switch]$Headless,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$Json,
+    [string]$RunId = '',
+    [string]$FlightLogDirectory = '',
+    [switch]$Rosbag,
+    [switch]$FlightQualification,
+    [ValidateRange(1, 1000)][int]$FlightQualificationLimitM = 1000,
+    [string]$FlightQualificationProfile = 'tests/vins_climb_unit/profile.json',
+    [switch]$FlightQualificationNoWind,
+    [switch]$FlightQualificationNoVisualUi,
+    [switch]$RouteQualification,
+    [string]$RouteQualificationProfile = 'tests/vins_10km_unit/profile.json',
+    [string]$VinsConfigFile = '',
+    [string]$Distro = 'Ubuntu',
+    [switch]$WithMissionPlanner
 )
 
 . (Join-Path $PSScriptRoot 'common.ps1')
@@ -13,6 +30,93 @@ function Test-PortFree([int]$Port) {
     $tcp = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue
     $udp = Get-NetUDPEndpoint -LocalPort $Port -ErrorAction SilentlyContinue
     return -not ($tcp -or $udp)
+}
+
+function Invoke-EnvironmentList {
+    $rows = foreach ($entry in $script:EnvironmentLock.environments.psobject.Properties) {
+        $environmentId = $entry.Name
+        $manifestPath = Join-Path (Join-Path $script:EnvironmentsRoot $environmentId) 'environment.json'
+        if (-not (Test-Path -LiteralPath $manifestPath)) {
+            [pscustomobject]@{ Id = $environmentId; Version = '-'; Readiness = 'NOT_INITIALIZED'; Offline = '-'; Global = '-'; Map = "run setup -Environment $environmentId" }
+            continue
+        }
+        try {
+            $manifest = Get-EnvironmentManifest -EnvironmentId $environmentId -AllowScaffold
+            [pscustomobject]@{
+                Id = $manifest.id
+                Version = $manifest.version
+                Readiness = $manifest.readiness
+                Offline = [bool]$manifest.capabilities.offline
+                Global = [bool]$manifest.capabilities.global_streaming
+                Map = $manifest.map_path
+            }
+        } catch {
+            [pscustomobject]@{ Id = $environmentId; Version = '-'; Readiness = 'INVALID'; Offline = $false; Global = $false; Map = $_.Exception.Message }
+        }
+    }
+    if (-not $rows) { throw "No environment manifests were found under $script:EnvironmentsRoot." }
+    $rows | Sort-Object Id | Format-Table -AutoSize
+}
+
+function Invoke-EnvironmentDoctor([string]$EnvironmentId) {
+    Write-Step "Checking environment '$EnvironmentId'"
+    try {
+        $manifest = Get-EnvironmentManifest -EnvironmentId $EnvironmentId -RequireReady
+        Write-Pass 'Manifest' "schema $($manifest.schema), version $($manifest.version)"
+        Write-Pass 'Unreal compatibility' ($manifest.compatibility.unreal_engine -join ', ')
+        Write-Pass 'Map' $manifest.map_path
+        if ($manifest.content_plugin.path) {
+            Write-Pass 'Content plugin' (Join-Path $script:EnvironmentsRoot "$EnvironmentId\$($manifest.content_plugin.path)")
+        } else {
+            Write-Pass 'Content plugin' 'built into parent project'
+        }
+        Write-Pass 'Qualification' $(if ($manifest.profiles.qualification) { 'available' } else { 'not declared' })
+        return 0
+    } catch {
+        Write-Fail 'Environment' $_.Exception.Message
+        return 1
+    }
+}
+
+function Write-Capabilities {
+    $manifest = Get-EnvironmentManifest -EnvironmentId $Environment -AllowScaffold
+    $capabilities = [ordered]@{
+        schema = 1
+        backend = 'cosys-airsim'
+        backend_version = $script:Lock.submodules.'third_party/Cosys-AirSim'.release
+        environment = [ordered]@{
+            id = $manifest.id
+            version = $manifest.version
+            readiness = $manifest.readiness
+            wgs84_origin = $manifest.wgs84_origin
+        }
+        interfaces = [ordered]@{
+            launcher = 'dev.ps1'
+            evidence_schema = 1
+            mission_planner_default_for_test = $false
+            ros2 = $false
+            vins = $false
+            wind_command_ack = $false
+            camera_fixed_rate_hz = $false
+            camera_imu_batched = $false
+        }
+        commands = [ordered]@{
+            run = @('-Environment', '-RenderProfile', '-Headless', '-NoMissionPlanner')
+            test = @('-Environment', '-RenderProfile')
+            qualification_accepted_args = @('-RunId', '-FlightLogDirectory', '-Rosbag', '-FlightQualification', '-FlightQualificationLimitM', '-FlightQualificationProfile', '-FlightQualificationNoWind', '-FlightQualificationNoVisualUi', '-RouteQualification', '-RouteQualificationProfile', '-VinsConfigFile', '-Distro', '-WithMissionPlanner')
+        }
+    }
+    $serialized = $capabilities | ConvertTo-Json -Depth 10
+    if ($Json) { Write-Output $serialized } else { $capabilities | Format-List }
+}
+
+function Assert-QualificationCapabilities {
+    if (-not $FlightQualification -and -not $RouteQualification) { return }
+    if ($FlightQualification -and $RouteQualification) { throw 'FlightQualification and RouteQualification are mutually exclusive.' }
+    $missing = @('ros2', 'vins', 'camera_fixed_rate_hz', 'camera_imu_batched', 'wind_command_ack')
+    if ($FlightQualificationNoWind) { $missing = @($missing | Where-Object { $_ -ne 'wind_command_ack' }) }
+    $kind = if ($FlightQualification) { 'VINS climb' } else { 'VINS route' }
+    throw "$kind qualification is registered but not enabled on the current Cosys backend. Missing capabilities: $($missing -join ', '). Query '.\dev.ps1 capabilities -Environment $Environment -Json'. No simulator process was started."
 }
 
 function Invoke-Doctor {
@@ -100,6 +204,9 @@ function Invoke-Setup {
         if ($actual -ne $entry.Value.commit) { throw "$($entry.Name) is not at its pinned commit." }
     }
 
+    Initialize-EnvironmentPackage -EnvironmentId $Environment
+    Get-EnvironmentManifest -EnvironmentId $Environment -AllowScaffold | Out-Null
+
     & (Join-Path $PSScriptRoot 'mission-planner.ps1') -Action Setup
     if ($LASTEXITCODE -ne 0) { throw 'Mission Planner setup failed.' }
 
@@ -130,6 +237,7 @@ function Invoke-Setup {
 }
 
 function Invoke-Build {
+    $environmentManifest = Get-EnvironmentManifest -EnvironmentId $Environment -RequireReady
     $ue = Get-UeRoot
     $vs = Get-VsInstallPath
     $msvc = Get-MsvcVersion $vs
@@ -153,6 +261,8 @@ function Invoke-Build {
     & robocopy.exe $sourcePlugin $targetPlugin /MIR /XD Binaries Intermediate /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "Plugin staging failed with robocopy code $LASTEXITCODE." }
 
+    Stage-EnvironmentPlugin -Manifest $environmentManifest
+
     Write-Step 'Building the IndraCosysDemo Development Editor target'
     $project = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\IndraCosysDemo.uproject'
     $buildBat = Join-Path $ue 'Engine\Build\BatchFiles\Build.bat'
@@ -166,6 +276,9 @@ function Invoke-Build {
 }
 
 function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner) {
+    if ($Distro -ne $script:Lock.platform.wsl_distribution) { throw "This pinned bundle requires WSL distribution '$($script:Lock.platform.wsl_distribution)', received '$Distro'." }
+    $environmentManifest = Get-EnvironmentManifest -EnvironmentId $Environment -RequireReady
+    Stage-EnvironmentPlugin -Manifest $environmentManifest
     if (-not $SkipBuild) {
         $plugin = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Plugins\AirSim\AirSim.uplugin'
         $editorDll = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Binaries\Win64\UnrealEditor-IndraCosysDemo.dll'
@@ -178,7 +291,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner) {
     }
 
     $kind = if ($ForTest) { 'test' } else { 'run' }
-    $runDirectory = New-RunDirectory $kind
+    $runDirectory = New-RunDirectory -Kind $kind -RequestedRunId $RunId -RequestedDirectory $FlightLogDirectory
     $settings = New-AirSimSettings $runDirectory
     Write-Step "Run bundle: $runDirectory"
     Write-Step "Network: Windows $($settings.Network.WindowsIp), WSL $($settings.Network.WslIp)"
@@ -188,7 +301,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner) {
     $editor = Join-Path $ue 'Engine\Binaries\Win64\UnrealEditor.exe'
     $project = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\IndraCosysDemo.uproject'
     $ueLog = Join-Path $runDirectory 'unreal\Unreal.log'
-    $arguments = @($project, '/Game/FlyingCPP/Maps/FlyingExampleMap', '-game', '-windowed', '-ResX=1280', '-ResY=720', '-log', "-abslog=$ueLog", "-settings=$($settings.Path)")
+    $arguments = @($project, $environmentManifest.map_path, '-game', '-windowed', '-ResX=1280', '-ResY=720', '-log', "-abslog=$ueLog", "-settings=$($settings.Path)", "-IndraRenderProfile=$RenderProfile", "-IndraEnvironment=$($environmentManifest.id)")
     if ($ForTest) { $arguments += @('-Unattended', '-NoSplash') }
     if ($Headless) { $arguments += '-RenderOffscreen' }
     $ueProcess = Start-Process -FilePath $editor -ArgumentList $arguments -WorkingDirectory (Split-Path -Parent $project) -PassThru
@@ -239,7 +352,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner) {
     if (-not $mavlinkReady) { throw "SITL did not open MAVLink TCP $($script:Config.ports.mavlink_tcp)/$($script:Config.ports.mission_planner_tcp) within 60 seconds." }
     Write-Pass 'MAVLink listeners' "TCP $($script:Config.ports.mavlink_tcp)/$($script:Config.ports.mission_planner_tcp) ready"
 
-    if (-not $NoMissionPlanner) {
+    if ($WithMissionPlanner -or -not $NoMissionPlanner) {
         & (Join-Path $PSScriptRoot 'mission-planner.ps1') -Action Start -RunDirectory $runDirectory -Port $script:Config.ports.mission_planner_tcp
     }
 
@@ -249,6 +362,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner) {
         cosys_commit = $script:Lock.submodules.'third_party/Cosys-AirSim'.commit
         ardupilot_commit = $script:Lock.submodules.'third_party/ardupilot'.commit
         ue = $script:Lock.platform.unreal_engine; settings = $settings.Path
+        environment = [ordered]@{ id = $environmentManifest.id; version = $environmentManifest.version; map = $environmentManifest.map_path; render_profile = $RenderProfile }
         endpoints = $script:Config.ports; network = $settings.Network
     }
     Write-JsonFile $metadata (Join-Path $runDirectory 'summary.json')
@@ -299,8 +413,8 @@ switch ($Command) {
     'doctor' { exit (Invoke-Doctor) }
     'setup' { Invoke-Setup }
     'build' { Invoke-Build }
-    'run' { $run = Start-Environment $false; Write-Host "Environment is running. Evidence: $run" -ForegroundColor Green }
-    'test' { Invoke-SmokeTest }
+    'run' { Assert-QualificationCapabilities; $run = Start-Environment $false -NoMissionPlanner:$NoMissionPlanner; Write-Host "Environment is running. Evidence: $run" -ForegroundColor Green }
+    'test' { Assert-QualificationCapabilities; Invoke-SmokeTest }
     'camera-test' {
         Write-Step 'Qualifying the 20 FPS raw-RGB camera profile (Mission Planner is not started)'
         & (Join-Path $PSScriptRoot 'camera-benchmark.ps1') -Width 640 -Height 480 -DurationSeconds 20
@@ -319,5 +433,9 @@ switch ($Command) {
         Write-Host $latest.FullName
         Invoke-Item -LiteralPath $latest.FullName
     }
+    'env' {
+        if ($EnvironmentCommand -eq 'list') { Invoke-EnvironmentList } else { exit (Invoke-EnvironmentDoctor -EnvironmentId $Environment) }
+    }
+    'capabilities' { Write-Capabilities }
 }
 exit 0

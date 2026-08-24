@@ -25,3 +25,15 @@ When asked to deploy this repository on another workstation, follow `docs/DEPLOY
 - Do not mark deployment complete merely because compilation succeeded. Completion requires `dev.ps1 test`, a landed/disarmed vehicle, and `summary.json` with `status: PASS`.
 - Do not launch Mission Planner from `dev.ps1 test`; it is intentionally reserved for interactive `dev.ps1 run` so the automated acceptance run has no obstructing UI.
 - Qualify camera throughput with `dev.ps1 camera-test`. Keep `ForceUpdate=false`, request raw RGB, and keep PNG encoding outside the real-time path. A camera change is accepted only from unique simulation timestamps, not RPC call count alone.
+
+## Environment package directive
+
+- Read `docs/ENVIRONMENTS.md` and the selected package's `environment.json` before editing a map. Never place a large environment directly in the parent UE project.
+- Treat `environments.lock.json` like `components.lock.json`: every environment submodule update requires an intentional pinned commit update in the same parent commit.
+- `readiness: ready` is an acceptance claim. Do not change it from `scaffold` or `preview` until the map package exists and every gate listed in the package build specification passes.
+- Keep the 4 x 4 km SIM2 qualification core deterministic and offline. Cesium is an optional visual overlay/global environment; token or network availability must never become a qualification dependency.
+- Keep Cesium tokens and source downloads outside Git. Commit large licence-compatible derived files only through Git LFS and record source/derived hashes, provider, licence, bounds and acquisition time.
+- Do not bulk migrate `D:\FILES\Kkovalenko\OneDrive\UnrealEngine\AirSim\Environments`. Use it read-only, verify OneDrive files are locally available, audit licence/provenance, and migrate only selected UE assets through Unreal's Asset Actions -> Migrate workflow.
+- Use free assets only for rural vegetation. Record every tree, grass, corn or sunflower source in `ASSET_PROVENANCE.json`; private repository visibility does not grant redistribution rights.
+- Run automated tests without Mission Planner. Add an observer UI only for an explicitly interactive run.
+- Test repositories must target `docs/TEST_COMPATIBILITY.md`, query `dev.ps1 capabilities -Json`, and preserve their public entrypoints, profile schema, ROS topic names and verdict semantics. Do not add a permanent Cosys-only test fork.

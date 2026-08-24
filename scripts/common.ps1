@@ -4,13 +4,91 @@ $ErrorActionPreference = 'Stop'
 $script:RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $script:RuntimeRoot = Join-Path $script:RepoRoot '.runtime'
 $script:LogsRoot = Join-Path $script:RepoRoot 'logs'
+$script:EnvironmentsRoot = Join-Path $script:RepoRoot 'environments'
 $script:Config = Get-Content -Raw -LiteralPath (Join-Path $script:RepoRoot 'config\demo.json') | ConvertFrom-Json
 $script:Lock = Get-Content -Raw -LiteralPath (Join-Path $script:RepoRoot 'components.lock.json') | ConvertFrom-Json
+$environmentLockPath = Join-Path $script:RepoRoot 'environments.lock.json'
+$script:EnvironmentLock = if (Test-Path -LiteralPath $environmentLockPath) { Get-Content -Raw -LiteralPath $environmentLockPath | ConvertFrom-Json } else { [pscustomobject]@{ environments = [pscustomobject]@{} } }
 
 function Write-Step([string]$Message) { Write-Host "[indra-cosys] $Message" -ForegroundColor Cyan }
 function Write-Pass([string]$Name, [string]$Detail) { Write-Host ("  PASS  {0,-24} {1}" -f $Name, $Detail) -ForegroundColor Green }
 function Write-Fail([string]$Name, [string]$Detail) { Write-Host ("  FAIL  {0,-24} {1}" -f $Name, $Detail) -ForegroundColor Red }
 function Write-Warn([string]$Name, [string]$Detail) { Write-Host ("  WARN  {0,-24} {1}" -f $Name, $Detail) -ForegroundColor Yellow }
+
+function Initialize-EnvironmentPackage([string]$EnvironmentId) {
+    $property = $script:EnvironmentLock.environments.psobject.Properties[$EnvironmentId]
+    if (-not $property -or -not $property.Value.submodule) { return }
+    $relativePath = [string]$property.Value.submodule
+    $absolutePath = Join-Path $script:RepoRoot $relativePath
+    $gitMarker = Join-Path $absolutePath '.git'
+    if (-not (Test-Path -LiteralPath $gitMarker)) {
+        Write-Step "Initialising environment submodule $relativePath"
+        & git -C $script:RepoRoot submodule update --init --recursive -- $relativePath
+        if ($LASTEXITCODE -ne 0) { throw "Unable to initialise private environment '$EnvironmentId'. Authenticate GitHub account access to Drone-Age and retry." }
+    }
+    $actual = (& git -C $absolutePath rev-parse HEAD 2>$null).Trim()
+    if ($property.Value.commit -and $actual -ne $property.Value.commit) {
+        throw "Environment '$EnvironmentId' must be at $($property.Value.commit), found $actual."
+    }
+}
+
+function Get-EnvironmentManifest {
+    param(
+        [Parameter(Mandatory)][ValidatePattern('^[a-z0-9][a-z0-9-]*$')][string]$EnvironmentId,
+        [switch]$RequireReady,
+        [switch]$AllowScaffold
+    )
+    $directory = Join-Path $script:EnvironmentsRoot $EnvironmentId
+    $manifestPath = Join-Path $directory 'environment.json'
+    if (-not (Test-Path -LiteralPath $manifestPath)) {
+        $locked = $script:EnvironmentLock.environments.psobject.Properties[$EnvironmentId]
+        if ($locked) { throw "Environment '$EnvironmentId' is configured but not initialised. Run .\dev.ps1 setup -Environment $EnvironmentId." }
+        throw "Unknown environment '$EnvironmentId'. Run .\dev.ps1 env list."
+    }
+    try { $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json } catch { throw "Invalid JSON in $manifestPath`: $($_.Exception.Message)" }
+    if ([int]$manifest.schema -ne 1) { throw "Environment '$EnvironmentId' uses unsupported schema '$($manifest.schema)'." }
+    if ($manifest.id -ne $EnvironmentId) { throw "Manifest id '$($manifest.id)' does not match directory '$EnvironmentId'." }
+    if (-not $manifest.version -or -not $manifest.map_path -or -not $manifest.wgs84_origin) { throw "Environment '$EnvironmentId' is missing version, map_path or wgs84_origin." }
+    if (-not ([string]$manifest.map_path).StartsWith('/')) { throw "Environment '$EnvironmentId' map_path must be an Unreal package path beginning with '/'." }
+    if (@($manifest.compatibility.unreal_engine) -notcontains $script:Lock.platform.unreal_engine) { throw "Environment '$EnvironmentId' does not declare UE $($script:Lock.platform.unreal_engine) compatibility." }
+    if ($manifest.content_plugin.path) {
+        $pluginPath = Join-Path $directory ([string]$manifest.content_plugin.path)
+        if (-not (Test-Path -LiteralPath $pluginPath -PathType Container)) { throw "Environment '$EnvironmentId' content plugin is missing: $pluginPath" }
+        $descriptor = Join-Path $pluginPath ([string]$manifest.content_plugin.descriptor)
+        if (-not (Test-Path -LiteralPath $descriptor -PathType Leaf)) { throw "Environment '$EnvironmentId' plugin descriptor is missing: $descriptor" }
+    }
+    $requiredPluginsProperty = $manifest.psobject.Properties['required_plugins']
+    $requiredPlugins = if ($requiredPluginsProperty) { @($requiredPluginsProperty.Value) } else { @() }
+    foreach ($requiredPlugin in $requiredPlugins) {
+        $requiredPath = Join-Path $directory ([string]$requiredPlugin.path)
+        $requiredDescriptor = Join-Path $requiredPath ([string]$requiredPlugin.descriptor)
+        if (-not (Test-Path -LiteralPath $requiredDescriptor -PathType Leaf)) { throw "Environment '$EnvironmentId' required plugin is missing: $requiredDescriptor" }
+    }
+    if ($RequireReady -and $manifest.readiness -ne 'ready') { throw "Environment '$EnvironmentId' readiness is '$($manifest.readiness)', not 'ready'." }
+    if (-not $AllowScaffold -and -not $RequireReady -and $manifest.readiness -eq 'scaffold') { throw "Environment '$EnvironmentId' is only a scaffold." }
+    return $manifest
+}
+
+function Stage-EnvironmentPlugin([object]$Manifest) {
+    $projectPluginsRoot = [IO.Path]::GetFullPath((Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Plugins'))
+    $stagingRoot = [IO.Path]::GetFullPath((Join-Path $projectPluginsRoot 'Environments'))
+    if (-not $stagingRoot.StartsWith($projectPluginsRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $stagingRoot) -ne 'Environments') {
+        throw "Unsafe environment staging path: $stagingRoot"
+    }
+    if (Test-Path -LiteralPath $stagingRoot) { Remove-Item -LiteralPath $stagingRoot -Recurse -Force }
+    $plugins = @()
+    if ($Manifest.content_plugin.path) { $plugins += $Manifest.content_plugin }
+    $requiredPluginsProperty = $Manifest.psobject.Properties['required_plugins']
+    if ($requiredPluginsProperty) { $plugins += @($requiredPluginsProperty.Value) }
+    foreach ($plugin in $plugins) {
+        $source = Join-Path (Join-Path $script:EnvironmentsRoot $Manifest.id) ([string]$plugin.path)
+        $name = [IO.Path]::GetFileNameWithoutExtension([string]$plugin.descriptor)
+        $target = Join-Path $stagingRoot $name
+        New-Item -ItemType Directory -Force -Path $target | Out-Null
+        & robocopy.exe $source $target /MIR /XD Binaries Intermediate Saved DerivedDataCache /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "Environment plugin '$name' staging failed with robocopy code $LASTEXITCODE." }
+    }
+}
 
 function Get-UeRoot {
     $candidates = @()
@@ -94,10 +172,22 @@ function Get-NetworkInfo {
     return [pscustomobject]@{ WslIp = $wslIp; WindowsIp = $windowsIp }
 }
 
-function New-RunDirectory([string]$Kind) {
-    $day = Get-Date -Format 'yyyy-MM-dd'
-    $runId = '{0}_{1}_{2}' -f (Get-Date -Format 'HHmmss'), $Kind, ([guid]::NewGuid().ToString('N').Substring(0, 8))
-    $directory = Join-Path $script:LogsRoot "$day`_$runId"
+function New-RunDirectory {
+    param([string]$Kind, [string]$RequestedRunId = '', [string]$RequestedDirectory = '')
+    if ($RequestedRunId -and $RequestedRunId -notmatch '^[A-Za-z0-9_-]+$') { throw "RunId must contain only letters, numbers, underscore and dash: '$RequestedRunId'." }
+    $runId = if ($RequestedRunId) { $RequestedRunId } else { '{0}_{1}_{2}' -f (Get-Date -Format 'HHmmss'), $Kind, ([guid]::NewGuid().ToString('N').Substring(0, 8)) }
+    if ($RequestedDirectory) {
+        $directory = [IO.Path]::GetFullPath($RequestedDirectory)
+        if (Test-Path -LiteralPath $directory) {
+            $existing = @(Get-ChildItem -LiteralPath $directory -Force -ErrorAction SilentlyContinue)
+            $allowedLauncherFiles = @('test-run.json', 'launcher-transcript.log')
+            $unexpected = @($existing | Where-Object { $_.PSIsContainer -or $_.Name -notin $allowedLauncherFiles })
+            if ($unexpected.Count) { throw "FlightLogDirectory already contains unexpected evidence: $directory ($($unexpected.Name -join ', '))" }
+        }
+    } else {
+        $day = Get-Date -Format 'yyyy-MM-dd'
+        $directory = Join-Path $script:LogsRoot "$day`_$runId"
+    }
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $directory 'unreal'), (Join-Path $directory 'sitl'), (Join-Path $directory 'mission-planner') | Out-Null
     Set-Content -LiteralPath (Join-Path $script:RuntimeRoot 'active-run.txt') -Value $directory -Encoding utf8

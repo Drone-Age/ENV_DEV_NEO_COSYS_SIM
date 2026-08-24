@@ -12,6 +12,7 @@ unreal/**/Intermediate/
 unreal/**/Saved/
 unreal/**/.vs/
 unreal/**/Plugins/AirSim/
+unreal/**/Plugins/Environments/
 *.sln
 *.VC.db
 *.opensdf

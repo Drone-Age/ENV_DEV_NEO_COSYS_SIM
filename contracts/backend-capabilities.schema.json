@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Drone-Age/ENV_DEV_NEO_COSYS_SIM/contracts/backend-capabilities.schema.json",
+  "title": "INDRA simulator backend capabilities",
+  "type": "object",
+  "required": ["schema", "backend", "backend_version", "environment", "interfaces", "commands"],
+  "properties": {
+    "schema": { "const": 1 },
+    "backend": { "type": "string" },
+    "backend_version": { "type": "string" },
+    "environment": {
+      "type": "object",
+      "required": ["id", "version", "readiness", "wgs84_origin"]
+    },
+    "interfaces": {
+      "type": "object",
+      "required": ["launcher", "evidence_schema", "mission_planner_default_for_test", "ros2", "vins", "wind_command_ack", "camera_fixed_rate_hz", "camera_imu_batched"],
+      "additionalProperties": true
+    },
+    "commands": { "type": "object" }
+  }
+}

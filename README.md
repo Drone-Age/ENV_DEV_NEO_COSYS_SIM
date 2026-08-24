@@ -27,6 +27,21 @@ For the canonical automatic mission:
 .\dev.ps1 test
 ```
 
+## Environment packages
+
+The UE host project is intentionally small. Maps and reusable asset sets are versioned independently and mounted as content-only plugins:
+
+```powershell
+.\dev.ps1 env list
+.\dev.ps1 env doctor blocks
+.\dev.ps1 setup -Environment sim2-rural
+.\dev.ps1 run -Environment blocks -RenderProfile qualification
+```
+
+`blocks` is the ready offline baseline. `sim2-rural` is the private 4 x 4 km qualification environment at the exact SIM2 origin, and `cesium-global` is an optional global visual environment. The latter two currently advertise `readiness: scaffold`; the launcher rejects them until their real UE maps pass the environment acceptance gates. Access to private `Drone-Age` repositories is required to initialise them.
+
+Environment architecture, real-map data policy and milestones are documented in [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md). Backend-neutral compatibility with the existing VINS climb/route repositories is specified in [docs/TEST_COMPATIBILITY.md](docs/TEST_COMPATIBILITY.md).
+
 For the camera throughput qualification (640x480 and 1280x720, no Mission Planner):
 
 ```powershell
@@ -39,4 +54,4 @@ Each run gets its own evidence directory under `logs`. Use `.\dev.ps1 stop` to s
 
 For a clean-machine installation, exact prerequisites, verification gates and agent handoff rules, follow [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-The v0.1 gate intentionally excludes ROS 2, VINS, migrated SIM2 terrain, gimbal and high-rate camera IMU. Those capabilities are added only after this flight loop is reliable. Camera findings and the upgrade path are recorded in [docs/CAMERA_PERFORMANCE.md](docs/CAMERA_PERFORMANCE.md).
+The v0.1 gate intentionally excludes ROS 2, VINS, migrated SIM2 terrain, gimbal and high-rate camera IMU. `dev.ps1 capabilities -Environment blocks -Json` reports implemented capabilities so external tests can fail early instead of inferring support. Camera findings and the upgrade path are recorded in [docs/CAMERA_PERFORMANCE.md](docs/CAMERA_PERFORMANCE.md).

@@ -1,14 +1,35 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'stop', 'logs')]
+    [ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'stop', 'logs', 'env', 'capabilities')]
     [string]$Command = 'doctor',
+    [Parameter(Position = 1)]
+    [ValidateSet('list', 'doctor')]
+    [string]$EnvironmentCommand = 'list',
+    [Parameter(Position = 2)]
+    [string]$Environment = 'blocks',
+    [ValidateSet('qualification', 'visual')]
+    [string]$RenderProfile = 'qualification',
     [switch]$NoMissionPlanner,
     [switch]$Headless,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$Json,
+    [string]$RunId = '',
+    [string]$FlightLogDirectory = '',
+    [switch]$Rosbag,
+    [switch]$FlightQualification,
+    [ValidateRange(1, 1000)][int]$FlightQualificationLimitM = 1000,
+    [string]$FlightQualificationProfile = 'tests/vins_climb_unit/profile.json',
+    [switch]$FlightQualificationNoWind,
+    [switch]$FlightQualificationNoVisualUi,
+    [switch]$RouteQualification,
+    [string]$RouteQualificationProfile = 'tests/vins_10km_unit/profile.json',
+    [string]$VinsConfigFile = '',
+    [string]$Distro = 'Ubuntu',
+    [switch]$WithMissionPlanner
 )
 
 $ErrorActionPreference = 'Stop'
 $script = Join-Path $PSScriptRoot 'scripts\dev-command.ps1'
-& $script -Command $Command -NoMissionPlanner:$NoMissionPlanner -Headless:$Headless -SkipBuild:$SkipBuild
+& $script @PSBoundParameters
 exit $LASTEXITCODE

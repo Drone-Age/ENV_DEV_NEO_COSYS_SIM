@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "policy_version": "2.0.0",
+  "backend_contract": "../docs/TEST_COMPATIBILITY.md",
+  "tests": [
+    {
+      "test_id": "VINS-LOITER-DYNAMIC-STABILITY-CLIMB",
+      "name": "VINS_CLIMB",
+      "version": "2.0.0",
+      "commit": "10b3f4717ee599b99a4bfdba4fca29869661ca37",
+      "repository": "Drone-Age/ENV_DEV_NEO_SIM_TEST_VINS_CLIMB",
+      "submodule_path": "tests/vins_climb_unit",
+      "entrypoint": "run-test.cmd",
+      "status": "registered-capability-blocked",
+      "required_capabilities": ["ros2", "vins", "camera_fixed_rate_hz", "camera_imu_batched", "wind_command_ack"]
+    },
+    {
+      "test_id": "VINS-GPS-ROUTE-MISSION-ACCURACY",
+      "name": "VINS_ROUTE_QUALIFICATION",
+      "version": "1.0.0",
+      "commit": "a11707a4281d84f304817a6547eac4108d5819de",
+      "repository": "Drone-Age/ENV_DEV_NEO_SIM_TEST_VINS_10KM",
+      "submodule_path": "tests/vins_10km_unit",
+      "entrypoint": "run-test.cmd",
+      "status": "registered-capability-blocked",
+      "required_capabilities": ["ros2", "vins", "camera_fixed_rate_hz", "camera_imu_batched", "wind_command_ack"]
+    }
+  ]
+}

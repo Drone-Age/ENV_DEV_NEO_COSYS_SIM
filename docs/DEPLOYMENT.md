@@ -35,11 +35,29 @@ Close Visual Studio and idle MSBuild workers before servicing Visual Studio. Aft
 Clone recursively into a short local path outside OneDrive:
 
 ```powershell
-git clone --recurse-submodules https://github.com/Drone-Age/ENV_DEV_NEO_COSYS_SIM.git
+git clone https://github.com/Drone-Age/ENV_DEV_NEO_COSYS_SIM.git
 Set-Location ENV_DEV_NEO_COSYS_SIM
-git submodule update --init --recursive
 .\dev.ps1 doctor
 ```
+
+Do not begin with `--recurse-submodules` on a machine that has not authenticated for the private Drone-Age environment repositories. The default Blocks deployment initialises only the two public source dependencies. For a private map, authenticate `gh`/Git first and select it explicitly:
+
+```powershell
+gh auth status
+.\dev.ps1 setup -Environment sim2-rural
+.\dev.ps1 env doctor sim2-rural
+```
+
+`env doctor` will reject a package marked `scaffold`; this is expected until its real `.umap` and datasets have passed their own acceptance gate.
+
+The VINS qualification repositories are also private and are not needed for v0.1. Initialise them only on a qualification workstation:
+
+```powershell
+git submodule update --init -- tests/vins_climb_unit tests/vins_10km_unit
+git submodule status tests/vins_climb_unit tests/vins_10km_unit
+```
+
+Their expected commits are recorded in `tests/test-registry.json`. Until `dev.ps1 capabilities -Json` reports the required ROS/VINS/camera-IMU/wind features, their launch is expected to stop before starting Unreal.
 
 The expected source identities are enforced by `components.lock.json`:
 
@@ -63,6 +81,8 @@ Do not continue while `doctor` reports a failure. A Mission Planner warning befo
 - validates or installs the ArduPilot Ubuntu toolchain and `~/venv-ardupilot` Python environment;
 - installs the `rpc-msgpack` client used by the reproducible Cosys camera benchmark;
 - creates two narrow rules required by current WSL networking: Windows inbound UDP 9022 for UnrealEditor, and Hyper-V/WSL inbound UDP 9023 for the WSL creator. No port range is opened.
+
+It also initialises the selected environment submodule recursively. `blocks` is built into the parent and requires no private checkout. Environment commits are pinned in `environments.lock.json`.
 
 Ubuntu can ask for its `sudo` password during first-time package installation. Windows can ask for UAC consent for the firewall rules. The Windows rule applies to the exact UnrealEditor executable and UDP 9022; the Hyper-V rule applies only to WSL, UDP 9023, and the local subnet. These are expected security boundaries, not reasons to broaden permissions.
 
@@ -90,6 +110,15 @@ Generated plugin files, `Binaries`, `Intermediate`, `Saved`, Derived Data and `.
 ```
 
 The launcher discovers the current WSL and Windows host IPs on every run and writes a run-local `settings.json`. Interactive `run` starts Unreal first, ArduCopter SITL second and Mission Planner last. Automated `test` deliberately does not open Mission Planner; its controller owns TCP 5780 while the already-verified observer UI stays out of the way. Neither command reads or writes `Documents\AirSim\settings.json`.
+
+The default is the deterministic Blocks qualification profile. Environment and rendering choices are explicit and included in `summary.json`:
+
+```powershell
+.\dev.ps1 run -Environment blocks -RenderProfile qualification
+.\dev.ps1 test -Environment blocks -RenderProfile qualification
+```
+
+Never use a visual/Cesium profile as qualification evidence.
 
 Expected isolated endpoints for SITL instance 2:
 

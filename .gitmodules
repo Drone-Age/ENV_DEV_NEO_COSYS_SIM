@@ -5,3 +5,15 @@
 [submodule "third_party/ardupilot"]
 	path = third_party/ardupilot
 	url = https://github.com/Drone-Age/ardupilot.git
+[submodule "environments/sim2-rural"]
+	path = environments/sim2-rural
+	url = https://github.com/Drone-Age/ENV_DEV_NEO_COSYS_ENV_SIM2_RURAL.git
+[submodule "environments/cesium-global"]
+	path = environments/cesium-global
+	url = https://github.com/Drone-Age/ENV_DEV_NEO_COSYS_ENV_CESIUM_GLOBAL.git
+[submodule "tests/vins_climb_unit"]
+	path = tests/vins_climb_unit
+	url = https://github.com/Drone-Age/ENV_DEV_NEO_SIM_TEST_VINS_CLIMB.git
+[submodule "tests/vins_10km_unit"]
+	path = tests/vins_10km_unit
+	url = https://github.com/Drone-Age/ENV_DEV_NEO_SIM_TEST_VINS_10KM.git
