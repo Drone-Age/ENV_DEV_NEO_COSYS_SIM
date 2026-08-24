@@ -300,6 +300,21 @@ function Get-RecordedProcess([string]$StatePath) {
 }
 
 function Stop-RecordedProcesses([string]$RunDirectory) {
+    # Stop Linux consumers/producers before Unreal. Otherwise their final RPC
+    # calls time out against a dead Cosys server and contaminate a PASS bundle
+    # with false bridge errors during normal cleanup.
+    $stopper = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\stop_process_group.sh')
+    foreach ($relativePidPath in @('ros2\wsl.pid', 'sitl\wsl.pid', 'sitl\sitl.pid')) {
+        $wslPidFile = Join-Path $RunDirectory $relativePidPath
+        if (Test-Path -LiteralPath $wslPidFile) {
+            $pidValue = (Get-Content -Raw -LiteralPath $wslPidFile).Trim()
+            if ($pidValue -match '^\d+$') {
+                $graceSeconds = if ($relativePidPath -eq 'ros2\wsl.pid') { 4 } else { 1 }
+                Invoke-Wsl -Command "bash '$stopper' '$pidValue' '$graceSeconds'" -AllowFailure | Out-Null
+            }
+            Remove-Item -LiteralPath $wslPidFile -Force -ErrorAction SilentlyContinue
+        }
+    }
     foreach ($statePath in Get-ChildItem -LiteralPath $RunDirectory -Filter '*-process.json' -File -ErrorAction SilentlyContinue) {
         $process = Get-RecordedProcess $statePath.FullName
         if ($process) {
@@ -308,15 +323,5 @@ function Stop-RecordedProcesses([string]$RunDirectory) {
             if (-not $process.WaitForExit(5000)) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
         }
         Remove-Item -LiteralPath $statePath.FullName -Force -ErrorAction SilentlyContinue
-    }
-    foreach ($pidName in @('sitl.pid', 'wsl.pid')) {
-        $wslPidFile = Join-Path $RunDirectory "sitl\$pidName"
-        if (Test-Path -LiteralPath $wslPidFile) {
-            $pidValue = (Get-Content -Raw -LiteralPath $wslPidFile).Trim()
-            if ($pidValue -match '^\d+$') {
-                Invoke-Wsl -Command "kill -TERM $pidValue 2>/dev/null || true; sleep 1; kill -KILL $pidValue 2>/dev/null || true" -AllowFailure | Out-Null
-            }
-            Remove-Item -LiteralPath $wslPidFile -Force -ErrorAction SilentlyContinue
-        }
     }
 }

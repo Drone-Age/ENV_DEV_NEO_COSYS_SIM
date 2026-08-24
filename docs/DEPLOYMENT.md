@@ -94,6 +94,7 @@ Do not continue while `doctor` reports a failure. A Mission Planner warning befo
 - downloads Mission Planner 1.3.83 portable and verifies SHA-256 before extraction;
 - validates or installs the ArduPilot Ubuntu toolchain and `~/venv-ardupilot` Python environment;
 - installs the `rpc-msgpack` client used by the reproducible Cosys camera benchmark;
+- validates the existing SIM2 `/opt/iros2j` runtime or installs the official ROS 2 Jazzy base/message packages under `/opt/ros/jazzy` on Ubuntu 24.04;
 - creates two narrow rules required by current WSL networking: Windows inbound UDP 9022 for UnrealEditor, and Hyper-V/WSL inbound UDP 9023 for the WSL creator. No port range is opened.
 
 It also initialises the selected environment submodule recursively. `blocks` is built into the parent and requires no private checkout. Environment commits are pinned in `environments.lock.json`.
@@ -143,7 +144,7 @@ Expected isolated endpoints for SITL instance 2:
 | MAVLink/controller | TCP 5780 |
 | Mission Planner | TCP 5782 |
 | Cosys RPC | TCP 41452 |
-| Reserved future ROS domain | 44 |
+| ROS 2 Jazzy domain | 44 |
 
 Stop only the processes recorded for this environment:
 
@@ -166,6 +167,17 @@ Open the newest bundle with:
 ```
 
 Do not tag `v0.1.0` unless `summary.json` says `PASS`. Validate visible Unreal flight and Mission Planner telemetry separately with `dev.ps1 run`; Mission Planner is not opened by the automated test.
+
+### ROS 2 topic and flight regression
+
+After the ordinary flight PASS, verify the optional SIM2-compatible sensor graph:
+
+```powershell
+.\dev.ps1 ros-test -Environment blocks -SkipBuild
+.\dev.ps1 test -Environment blocks -SkipBuild -WithRos2
+```
+
+The first command requires all six topics, exact frame IDs, strictly increasing simulation timestamps, valid 640x480 RGB8 payload/calibration, synchronized image metadata and wall-clock delivery rates of at least 20 Hz for clock/odom, 50 Hz for both initial IMU feeds and 10 Hz for image/camera-info. The second repeats the full flight with the bridge active. Neither command launches Mission Planner. `setup` uses an existing `/opt/iros2j` when present; a clean Ubuntu 24.04 machine receives the official `/opt/ros/jazzy` packages and may request its sudo password.
 
 ## 7. Camera qualification
 

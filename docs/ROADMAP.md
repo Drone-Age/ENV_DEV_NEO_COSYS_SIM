@@ -32,7 +32,7 @@ Structural subgate: `env build-map sim2-rural` now regenerates and reload-verifi
 
 ## M2 - sensor and ROS compatibility
 
-- Implement the ROS 2 Jazzy topics, frames and simulation timestamps documented in `TEST_COMPATIBILITY.md`.
+- [done] Implement the ROS 2 Jazzy topics, frames and simulation timestamps documented in `TEST_COMPATIBILITY.md`. Blocks topic conformance passed with honest wall-clock floors (`2026-08-25_022548_test_53fc4229`), and the bridge remained error-free through the full TAKEOFF/square/LAND/DISARM regression (`2026-08-25_023033_test_50061191`).
 - [done] In `Drone-Age/Cosys-AirSim:indra-ue5.8`, decouple camera production from synchronous RPC: fixed-rate RGB at 21 Hz, three-slot asynchronous GPU readback and a bounded latest-frame buffer.
 - [done] Provide 640 x 480 and 1280 x 720 raw-RGB evidence. Acceptance remains >=20 FPS and >=10 FPS respectively; the current reference result is approximately 20.5 FPS at both resolutions.
 - [in progress] After the successful flight baseline, harden camera cadence: report p50/p95/p99/max inter-frame gaps and the worst full two-second window; require that neither supported resolution falls below 10 unique FPS in any full two-second window. Windows-native 1280 x 720 passes at 20.56 FPS / 19.5 FPS worst window with 0 duplicate timestamps; WSL2 NAT varies around 14-15 FPS and has produced an 8.5 FPS worst window, so the final ROS/VINS transport is not qualified yet.

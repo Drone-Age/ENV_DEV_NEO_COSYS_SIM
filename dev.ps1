@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'stop', 'logs', 'env', 'capabilities')]
+    [ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'stop', 'logs', 'env', 'capabilities')]
     [string]$Command = 'doctor',
     [Parameter(Position = 1)]
     [ValidateSet('list', 'doctor', 'build-map')]
@@ -27,6 +27,7 @@ param(
     [string]$RouteQualificationProfile = 'tests/vins_10km_unit/profile.json',
     [string]$VinsConfigFile = '',
     [string]$Distro = 'Ubuntu',
+    [switch]$WithRos2,
     [switch]$WithMissionPlanner
 )
 

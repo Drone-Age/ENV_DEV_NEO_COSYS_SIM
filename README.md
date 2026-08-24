@@ -27,6 +27,15 @@ For the canonical automatic mission:
 .\dev.ps1 test
 ```
 
+For the initial SIM2-compatible ROS 2 Jazzy sensor contract, without Mission Planner:
+
+```powershell
+.\dev.ps1 ros-test
+.\dev.ps1 test -WithRos2
+```
+
+`ros-test` verifies `/clock`, ground-truth odometry, body/camera IMU, raw RGB and camera calibration using strict simulation timestamps, expected frames and wall-clock delivery-rate floors. The flight variant proves that the bridge does not regress heartbeat, EKF, ARM, route, LAND or DISARM.
+
 ## Environment packages
 
 The UE host project is intentionally small. Maps and reusable asset sets are versioned independently and mounted as content-only plugins:
@@ -58,4 +67,4 @@ Each run gets its own evidence directory under `logs`. Use `.\dev.ps1 stop` to s
 
 For a clean-machine installation, exact prerequisites, verification gates and agent handoff rules, follow [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-The v0.1 gate intentionally excludes ROS 2, VINS, migrated SIM2 terrain, gimbal and high-rate camera IMU. `dev.ps1 capabilities -Environment blocks -Json` reports implemented capabilities so external tests can fail early instead of inferring support. Camera findings and the upgrade path are recorded in [docs/CAMERA_PERFORMANCE.md](docs/CAMERA_PERFORMANCE.md).
+The v0.1 release gate intentionally remains independent of ROS 2. The optional initial ROS 2 topic bridge is now qualified, while VINS, gimbal, batched 200 Hz camera IMU and wind command/ack remain incomplete. `dev.ps1 capabilities -Environment blocks -Json` reports implemented capabilities so external tests can fail early instead of inferring support. Camera findings and the upgrade path are recorded in [docs/CAMERA_PERFORMANCE.md](docs/CAMERA_PERFORMANCE.md).

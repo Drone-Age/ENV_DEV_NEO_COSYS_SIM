@@ -23,7 +23,7 @@ source "$HOME/venv-ardupilot/bin/activate"
 cd "$run_dir/sitl"
 supervisor="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sitl_supervisor.sh"
 
-nohup "$supervisor" "$ardupilot/build/sitl/bin/arducopter" \
+nohup setsid "$supervisor" "$ardupilot/build/sitl/bin/arducopter" \
     -w \
     --model airsim-copter \
     --speedup 1 \

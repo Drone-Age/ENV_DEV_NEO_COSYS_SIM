@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'stop', 'logs', 'env', 'capabilities')][string]$Command,
+    [Parameter(Mandatory)][ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'stop', 'logs', 'env', 'capabilities')][string]$Command,
     [ValidateSet('list', 'doctor', 'build-map')][string]$EnvironmentCommand = 'list',
     [string]$Environment = 'blocks',
     [ValidateSet('qualification', 'visual')][string]$RenderProfile = 'qualification',
@@ -21,6 +21,7 @@ param(
     [string]$RouteQualificationProfile = 'tests/vins_10km_unit/profile.json',
     [string]$VinsConfigFile = '',
     [string]$Distro = 'Ubuntu',
+    [switch]$WithRos2,
     [switch]$WithMissionPlanner
 )
 
@@ -28,7 +29,9 @@ param(
 New-Item -ItemType Directory -Force -Path $script:RuntimeRoot, $script:LogsRoot | Out-Null
 
 function Test-PortFree([int]$Port) {
-    $tcp = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue
+    # Closed RPC connections legitimately remain in TIME_WAIT between
+    # back-to-back acceptance runs. Only a listener conflicts with our bind.
+    $tcp = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
     $udp = Get-NetUDPEndpoint -LocalPort $Port -ErrorAction SilentlyContinue
     return -not ($tcp -or $udp)
 }
@@ -148,7 +151,7 @@ function Get-BackendCapabilities {
             launcher = 'dev.ps1'
             evidence_schema = 1
             mission_planner_default_for_test = $false
-            ros2 = $false
+            ros2 = $true
             vins = $false
             wind_command_ack = $false
             camera_fixed_rate_hz = $true
@@ -165,9 +168,10 @@ function Get-BackendCapabilities {
             rejects_uniform_frames = $true
         }
         commands = [ordered]@{
-            run = @('-Environment', '-RenderProfile', '-Headless', '-NoMissionPlanner', '-Preview')
-            test = @('-Environment', '-RenderProfile', '-Preview')
-            qualification_accepted_args = @('-RunId', '-FlightLogDirectory', '-Rosbag', '-FlightQualification', '-FlightQualificationLimitM', '-FlightQualificationProfile', '-FlightQualificationNoWind', '-FlightQualificationNoVisualUi', '-RouteQualification', '-RouteQualificationProfile', '-VinsConfigFile', '-Distro', '-WithMissionPlanner')
+            run = @('-Environment', '-RenderProfile', '-Headless', '-NoMissionPlanner', '-WithRos2', '-Preview')
+            test = @('-Environment', '-RenderProfile', '-WithRos2', '-Preview')
+            ros_test = @('-Environment', '-RenderProfile', '-Preview')
+            qualification_accepted_args = @('-RunId', '-FlightLogDirectory', '-Rosbag', '-FlightQualification', '-FlightQualificationLimitM', '-FlightQualificationProfile', '-FlightQualificationNoWind', '-FlightQualificationNoVisualUi', '-RouteQualification', '-RouteQualificationProfile', '-VinsConfigFile', '-Distro', '-WithRos2', '-WithMissionPlanner')
         }
     }
 }
@@ -221,6 +225,8 @@ function Invoke-Doctor {
     if ($cmake) { Write-Pass 'CMake' ((& cmake.exe --version | Select-Object -First 1)) } else { Write-Fail 'CMake' 'cmake.exe is not on PATH'; $failures++ }
     $wsl = Invoke-Wsl -Command 'lsb_release -ds' -AllowFailure
     if ($wsl.ExitCode -eq 0 -and (($wsl.Output -join ' ') -match 'Ubuntu 24\.04')) { Write-Pass 'WSL2 Ubuntu' ($wsl.Output -join ' ') } else { Write-Fail 'WSL2 Ubuntu' ($wsl.Output -join ' '); $failures++ }
+    $ros = Invoke-Wsl -Command "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; elif [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else exit 66; fi; test -x ~/venv-ardupilot/bin/python3 && ~/venv-ardupilot/bin/python3 -c 'import msgpackrpc, rclpy; from sensor_msgs.msg import Image, Imu; from nav_msgs.msg import Odometry; from rosgraph_msgs.msg import Clock'" -AllowFailure
+    if ($ros.ExitCode -eq 0) { Write-Pass 'ROS 2 Jazzy' 'ArduPilot venv sees RPC and SIM2 ROS message contracts' } else { Write-Fail 'ROS 2 Jazzy' 'combined ArduPilot venv + /opt/iros2j or /opt/ros/jazzy environment is required'; $failures++ }
 
     $gpu = Get-CimInstance Win32_VideoController | Where-Object Name -Match 'NVIDIA' | Select-Object -First 1
     if ($gpu) {
@@ -300,6 +306,15 @@ function Invoke-Setup {
     Write-Pass 'Cosys Python client' 'rpc-msgpack available for camera qualification'
     Write-Pass 'ArduPilot prerequisites' 'Ubuntu toolchain and ~/venv-ardupilot ready'
 
+    $rosReady = Invoke-Wsl -Command "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; elif [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else exit 66; fi; ~/venv-ardupilot/bin/python3 -c 'import msgpackrpc, rclpy; from sensor_msgs.msg import Image, Imu; from nav_msgs.msg import Odometry; from rosgraph_msgs.msg import Clock'" -AllowFailure
+    if ($rosReady.ExitCode -ne 0) {
+        Write-Warn 'ROS 2 Jazzy' 'sudo may request the Ubuntu password in this terminal'
+        $rosSetup = Convert-ToWslPath (Join-Path $PSScriptRoot 'wsl\setup_ros2_jazzy.sh')
+        & wsl.exe -d $script:Lock.platform.wsl_distribution -- bash $rosSetup
+        if ($LASTEXITCODE -ne 0) { throw 'ROS 2 Jazzy setup failed.' }
+    }
+    Write-Pass 'ROS 2 Jazzy' 'SIM2-compatible bridge runtime available'
+
     $ue = Get-UeRoot
     if ($ue) {
         try {
@@ -358,7 +373,27 @@ function Invoke-Build {
     Write-Pass 'Build' 'Cosys-AirSim, IndraCosysDemoEditor and ArduCopter SITL'
 }
 
-function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner) {
+function Start-RosBridge([string]$RunDirectory, [object]$Settings) {
+    $repoWsl = Convert-ToWslPath $script:RepoRoot
+    $runWsl = Convert-ToWslPath $RunDirectory
+    $profile = Convert-ToWslPath (Join-Path $script:RepoRoot 'config\ros2\sensor-profile.json')
+    $launcher = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\start_ros_bridge.sh')
+    $domainId = [int]$script:Config.future_ros_domain_id
+    $command = "bash '$launcher' '$repoWsl' '$runWsl' '$($Settings.Network.WindowsIp)' '$($script:Config.ports.cosys_rpc_tcp)' '$profile' '$domainId'"
+    $result = Invoke-Wsl -Command $command -AllowFailure
+    if ($result.ExitCode -ne 0) { throw "Unable to launch ROS 2 bridge: $($result.Output -join ' ')" }
+    $deadline = (Get-Date).AddSeconds(30)
+    $ready = $false
+    while ((Get-Date) -lt $deadline) {
+        $check = Invoke-Wsl -Command "test -s '$runWsl/ros2/wsl.pid' && kill -0 `$(cat '$runWsl/ros2/wsl.pid') && test -s '$runWsl/ros2/status.json'" -AllowFailure
+        if ($check.ExitCode -eq 0) { $ready = $true; break }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $ready) { throw "ROS 2 bridge did not become ready; see $RunDirectory\ros2\bridge.log" }
+    Write-Pass 'ROS 2 bridge' "domain $domainId, SIM2-compatible topics published"
+}
+
+function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$StartRos2) {
     if ($Distro -ne $script:Lock.platform.wsl_distribution) { throw "This pinned bundle requires WSL distribution '$($script:Lock.platform.wsl_distribution)', received '$Distro'." }
     $environmentManifest = Get-RuntimeEnvironmentManifest -EnvironmentId $Environment -Preview:$Preview
     if ($environmentManifest.readiness -eq 'preview') {
@@ -444,6 +479,8 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner) {
     if (-not $mavlinkReady) { throw "SITL did not open MAVLink TCP $($script:Config.ports.mavlink_tcp)/$($script:Config.ports.mission_planner_tcp) within 60 seconds." }
     Write-Pass 'MAVLink listeners' "TCP $($script:Config.ports.mavlink_tcp)/$($script:Config.ports.mission_planner_tcp) ready"
 
+    if ($StartRos2) { Start-RosBridge -RunDirectory $runDirectory -Settings $settings }
+
     if ($WithMissionPlanner -or -not $NoMissionPlanner) {
         & (Join-Path $PSScriptRoot 'mission-planner.ps1') -Action Start -RunDirectory $runDirectory -Port $script:Config.ports.mission_planner_tcp
     }
@@ -455,7 +492,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner) {
         ardupilot_commit = $script:Lock.submodules.'third_party/ardupilot'.commit
         ue = $script:Lock.platform.unreal_engine; settings = $settings.Path
         environment = [ordered]@{ id = $environmentManifest.id; version = $environmentManifest.version; readiness = $environmentManifest.readiness; preview_authorized = [bool]$Preview; map = $environmentManifest.map_path; render_profile = $RenderProfile }
-        endpoints = $script:Config.ports; network = $settings.Network
+        endpoints = $script:Config.ports; network = $settings.Network; ros2 = [ordered]@{ enabled = [bool]$StartRos2; domain_id = [int]$script:Config.future_ros_domain_id }
     }
     Write-JsonFile $metadata (Join-Path $runDirectory 'summary.json')
     return $runDirectory
@@ -463,7 +500,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner) {
 
 function Invoke-SmokeTest {
     try {
-        $runDirectory = Start-Environment -ForTest $true -NoMissionPlanner
+        $runDirectory = Start-Environment -ForTest $true -NoMissionPlanner -StartRos2:$WithRos2
     } catch {
         $startupRun = Get-ActiveRun
         if ($startupRun) { Stop-RecordedProcesses $startupRun }
@@ -501,12 +538,56 @@ function Invoke-SmokeTest {
     }
 }
 
+function Invoke-RosTopicTest {
+    try {
+        $runDirectory = Start-Environment -ForTest $true -NoMissionPlanner -StartRos2
+    } catch {
+        $startupRun = Get-ActiveRun
+        if ($startupRun) { Stop-RecordedProcesses $startupRun }
+        Remove-Item -LiteralPath (Join-Path $script:RuntimeRoot 'active-run.txt') -Force -ErrorAction SilentlyContinue
+        throw
+    }
+    try {
+        $runWsl = Convert-ToWslPath $runDirectory
+        $profile = Convert-ToWslPath (Join-Path $script:RepoRoot 'config\ros2\sensor-profile.json')
+        $probe = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\ros_topic_probe.py')
+        $output = "$runWsl/ros2/topic-probe.json"
+        $domainId = [int]$script:Config.future_ros_domain_id
+        $command = "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; else source /opt/ros/jazzy/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$probe' --duration 12 --profile '$profile' --output '$output'"
+        Write-Step 'Probing SIM2-compatible ROS 2 topics, rates, frames and timestamps'
+        $result = Invoke-Wsl -Command $command -AllowFailure
+        $result.Output | Tee-Object -FilePath (Join-Path $runDirectory 'ros2\topic-probe.log') | ForEach-Object { Write-Host $_ }
+        if ($result.ExitCode -ne 0) { throw "ROS topic conformance failed with code $($result.ExitCode)." }
+        $probeResult = Get-Content -Raw -LiteralPath (Join-Path $runDirectory 'ros2\topic-probe.json') | ConvertFrom-Json
+        $summaryPath = Join-Path $runDirectory 'summary.json'
+        $summary = Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json
+        $summary.status = 'PASS'
+        $summary | Add-Member -NotePropertyName completed_at -NotePropertyValue (Get-Date).ToUniversalTime().ToString('o') -Force
+        $summary | Add-Member -NotePropertyName ros_topic_probe -NotePropertyValue $probeResult -Force
+        Write-JsonFile $summary $summaryPath
+        Write-Host "ROS topic conformance PASS: $runDirectory" -ForegroundColor Green
+    } catch {
+        $summaryPath = Join-Path $runDirectory 'summary.json'
+        if (Test-Path -LiteralPath $summaryPath) {
+            $summary = Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json
+            $summary.status = 'FAIL'
+            $summary | Add-Member -NotePropertyName error -NotePropertyValue $_.Exception.Message -Force
+            Write-JsonFile $summary $summaryPath
+        }
+        throw
+    } finally {
+        Stop-RecordedProcesses $runDirectory
+        Remove-Item -LiteralPath (Join-Path $script:RuntimeRoot 'active-run.txt') -Force -ErrorAction SilentlyContinue
+    }
+}
+
 switch ($Command) {
     'doctor' { exit (Invoke-Doctor) }
     'setup' { Invoke-Setup }
     'build' { Invoke-Build }
-    'run' { Assert-QualificationCapabilities; $run = Start-Environment $false -NoMissionPlanner:$NoMissionPlanner; Write-Host "Environment is running. Evidence: $run" -ForegroundColor Green }
+    'run' { Assert-QualificationCapabilities; $run = Start-Environment $false -NoMissionPlanner:$NoMissionPlanner -StartRos2:$WithRos2; Write-Host "Environment is running. Evidence: $run" -ForegroundColor Green }
     'test' { Assert-QualificationCapabilities; Invoke-SmokeTest }
+    'ros-test' { Invoke-RosTopicTest }
     'camera-test' {
         Write-Step 'Qualifying raw-RGB camera profiles: 640x480 >= 20 FPS, 1280x720 >= 10 FPS (Mission Planner is not started)'
         & (Join-Path $PSScriptRoot 'camera-benchmark.ps1') -Width 640 -Height 480 -DurationSeconds 20 -MinRawFps 20 -Environment $Environment -RenderProfile $RenderProfile -Preview:$Preview
