@@ -53,7 +53,7 @@ gh auth status
 
 `sim2-rural` is currently marked `preview`. Normal `build`, `run` and flight tests reject it; an engineering validation must opt in with `-Preview`, which is recorded in `summary.json` and cannot promote readiness. `env doctor sim2-rural -Preview` validates package integrity, while `env build-map` is the structural acceptance command. The first clean map build can spend several minutes compiling UE shaders; wait while UnrealEditor-Cmd/ShaderCompileWorker remain active and require the final reload verifier PASS.
 
-The current preview supports a full 15 m square flight directly on the streamed DEM. The temporary pad is removed; runtime traces at 150 m and 500 m hit Landscape collision. The 1280 x 720 camera gate passes at 17.65 FPS against its 10 FPS minimum. The 640 x 480 path varies from 18.62 to 23.75 FPS, so repeatable >=20 FPS remains open together with the stable-20-Hz 1280 x 720 optimization target. Keep `readiness: preview` until the strict camera gate, full-extent seam/landing probes, vegetation and the remaining environment gates pass.
+The current preview supports a full 15 m square flight directly on the streamed DEM. The temporary pad is removed; runtime traces at 150 m and 500 m hit Landscape collision. The asynchronous raw Scene path passes 20-second tests at 20.50 FPS for 640 x 480 and 20.49 FPS for 1280 x 720 with zero duplicate timestamps. Saved-frame gates also prove that both resolutions return non-uniform image content. Keep `readiness: preview` until full-extent seam/landing probes, vegetation and the remaining environment gates pass.
 
 Private environment datasets use Git LFS. After setup, verify that raster files are real PNGs rather than pointer text:
 
@@ -75,7 +75,7 @@ Their expected commits are recorded in `tests/test-registry.json`. Until `dev.ps
 
 The expected source identities are enforced by `components.lock.json`:
 
-- `third_party/Cosys-AirSim` at `a552dd6cd517b8d5d26629ad88004356c3007326`, fork branch `indra-ue5.8`, release `5.8-v3.4.1`.
+- `third_party/Cosys-AirSim` at `d2ddee2141dfb3fc007cfdbba90ac240a15acf3e`, fork branch `indra-ue5.8`, based on release `5.8-v3.4.1`.
 - `third_party/ardupilot` at `ebceaa75aa175c6b6b52f69a8da8337e2919d62b`.
 
 Do not continue while `doctor` reports a failure. A Mission Planner warning before `setup` is expected.
@@ -112,10 +112,10 @@ The build order is:
 
 1. Cosys-AirSim/AirLib in Release with the selected MSVC 14.44 patch.
 2. Generated AirSim plugin staged into `unreal\IndraCosysDemo\Plugins\AirSim` (ignored by Git).
-3. `IndraCosysDemoEditor` for UE 5.8.1, Development/Win64, Windows SDK 10.0.22621.0.
+3. `IndraCosysDemoEditor` for UE 5.8.1, Development/Win64, Windows SDK 10.0.22621.0, explicitly enabling the selected environment plugin so a clean clone cannot depend on a stale DLL.
 4. ArduCopter SITL in Ubuntu 24.04.
 
-Generated plugin files, `Binaries`, `Intermediate`, `Saved`, Derived Data and `.runtime` must remain untracked.
+Generated plugin files, `Binaries`, `Intermediate`, `Saved`, Derived Data and `.runtime` must remain untracked. On HDD-based workspaces, place disposable Unreal `Intermediate` and Derived Data caches on SSD/NVMe when possible; a single AirSim unity unit took about 22 minutes on the reference SATA disk.
 
 ## 5. Interactive demo
 
@@ -175,7 +175,7 @@ Run the two supported resolutions without Mission Planner:
 .\dev.ps1 camera-test
 ```
 
-The live profile is Scene image type, raw RGB, `ForceUpdate=false`, Lumen GI/reflections disabled for the sensor capture, a 640x360 diagnostic viewport, and one request in flight. Acceptance is at least 20 unique frames/s at 640x480 and 10 unique frames/s at 1280x720. The viewport size does not change sensor output resolution. Do not use PNG compression in a control or VINS path; encode or record frames asynchronously downstream. See [CAMERA_PERFORMANCE.md](CAMERA_PERFORMANCE.md) for measured results and the source-level bottleneck.
+The live profile is Scene image type, raw RGB, `ForceUpdate=false`, Lumen GI/reflections disabled for the sensor capture, a 640x360 diagnostic viewport, and the fork's 21 Hz asynchronous GPU-readback producer. Acceptance is at least 20 unique frames/s at 640x480 and 10 unique frames/s at 1280x720. Every run analyzes early/late raw frames and rejects black or uniform content; `-SaveSamples` additionally preserves those frames as PPM artifacts. The viewport size does not change sensor output resolution. Do not use PNG compression in a control or VINS path; encode or record frames asynchronously downstream. See [CAMERA_PERFORMANCE.md](CAMERA_PERFORMANCE.md) for measured results and implementation details.
 
 Do not add `-RenderOffscreen` to the normal acceptance run. It reduced camera throughput on the qualified workstation and can also reduce simulation timing margin. It remains an explicit `-Headless` diagnostic option only.
 

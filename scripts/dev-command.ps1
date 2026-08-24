@@ -105,7 +105,8 @@ function Invoke-EnvironmentBuildMap([string]$EnvironmentId) {
     Write-Step 'Building the deterministic Sim2Rural editor commandlet'
     $project = Join-Path $projectRoot 'IndraCosysDemo.uproject'
     $buildBat = Join-Path $ue 'Engine\Build\BatchFiles\Build.bat'
-    & $buildBat IndraCosysDemoEditor Win64 Development "-Project=$project" -WaitMutex -FromMsBuild -NoUBA "-CompilerVersion=$compilerVersion" "-VCToolchainVersion=$compilerVersion" '-WindowsSdkVersion=10.0.22621.0'
+    $environmentPluginName = [IO.Path]::GetFileNameWithoutExtension([string]$manifest.content_plugin.descriptor)
+    & $buildBat IndraCosysDemoEditor Win64 Development "-Project=$project" -WaitMutex -FromMsBuild -NoUBA "-EnablePlugins=$environmentPluginName" "-CompilerVersion=$compilerVersion" "-VCToolchainVersion=$compilerVersion" '-WindowsSdkVersion=10.0.22621.0'
     if ($LASTEXITCODE -ne 0) { throw 'Sim2Rural editor commandlet build failed.' }
 
     $heightmap = Join-Path $script:EnvironmentsRoot 'sim2-rural\data\derived\gis\copdem-2021\height\SIM2_Rural_4033.png'
@@ -319,7 +320,17 @@ function Invoke-Build {
     Write-Step 'Building the IndraCosysDemo Development Editor target'
     $project = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\IndraCosysDemo.uproject'
     $buildBat = Join-Path $ue 'Engine\Build\BatchFiles\Build.bat'
-    & $buildBat IndraCosysDemoEditor Win64 Development "-Project=$project" -WaitMutex -FromMsBuild "-CompilerVersion=$compilerVersion" "-VCToolchainVersion=$compilerVersion" '-WindowsSdkVersion=10.0.22621.0'
+    # The generated plugin is mirrored into the project as writable files. UBT
+    # otherwise treats the entire AirSim source tree as an adaptive working set,
+    # creates dozens of multi-gigabyte non-unity compiler actions and thrashes a
+    # 32 GB workstation. The canonical source is the Cosys submodule, so a normal
+    # unity build is both safe and dramatically more reproducible here.
+    $environmentBuildArguments = @()
+    if ($environmentManifest.content_plugin.descriptor) {
+        $environmentPluginName = [IO.Path]::GetFileNameWithoutExtension([string]$environmentManifest.content_plugin.descriptor)
+        $environmentBuildArguments += "-EnablePlugins=$environmentPluginName"
+    }
+    & $buildBat IndraCosysDemoEditor Win64 Development "-Project=$project" -WaitMutex -FromMsBuild -DisableAdaptiveUnity -MaxParallelActions=2 @environmentBuildArguments "-CompilerVersion=$compilerVersion" "-VCToolchainVersion=$compilerVersion" '-WindowsSdkVersion=10.0.22621.0'
     if ($LASTEXITCODE -ne 0) { throw 'Unreal Development Editor build failed.' }
 
     Write-Step 'Building ArduCopter SITL in Ubuntu 24.04'
@@ -357,7 +368,13 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner) {
     $editor = Join-Path $ue 'Engine\Binaries\Win64\UnrealEditor.exe'
     $project = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\IndraCosysDemo.uproject'
     $ueLog = Join-Path $runDirectory 'unreal\Unreal.log'
-    $arguments = @($project, $environmentManifest.map_path, '-game', '-windowed', '-ResX=1280', '-ResY=720', '-log', "-abslog=$ueLog", "-settings=$($settings.Path)", "-IndraRenderProfile=$RenderProfile", "-IndraEnvironment=$($environmentManifest.id)")
+    $arguments = @(
+        $project, $environmentManifest.map_path,
+        '-game', '-windowed', '-ResX=1280', '-ResY=720', '-log',
+        "-abslog=$ueLog", "-settings=$($settings.Path)",
+        "-IndraRenderProfile=$RenderProfile", "-IndraEnvironment=$($environmentManifest.id)",
+        '-IndraAsyncCamera', '-IndraCameraName=0', '-IndraCameraHz=21'
+    )
     if ($ForTest) { $arguments += @('-Unattended', '-NoSplash') }
     if ($Headless) { $arguments += '-RenderOffscreen' }
     $ueProcess = Start-Process -FilePath $editor -ArgumentList $arguments -WorkingDirectory (Split-Path -Parent $project) -PassThru

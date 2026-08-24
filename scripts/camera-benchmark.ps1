@@ -11,6 +11,8 @@ param(
     [switch]$Preview,
     [switch]$Offscreen,
     [switch]$ForceUpdate,
+    [switch]$DisableAsyncCamera,
+    [switch]$SaveSamples,
     [switch]$WindowsClient
 )
 
@@ -54,6 +56,9 @@ try {
         "-abslog=$ueLog", "-settings=$($settingsInfo.Path)",
         "-IndraRenderProfile=$RenderProfile", "-IndraEnvironment=$($environmentManifest.id)"
     )
+    if (-not $DisableAsyncCamera) {
+        $arguments += @('-IndraAsyncCamera', '-IndraCameraName=0', '-IndraCameraHz=21')
+    }
     if ($Offscreen) { $arguments += '-RenderOffscreen' }
     $ueProcess = Start-Process -FilePath $editor -ArgumentList $arguments -WorkingDirectory (Split-Path -Parent $project) -PassThru
     Save-ProcessState $ueProcess 'unreal' $runDirectory
@@ -107,7 +112,9 @@ try {
         $previousPythonPath = $env:PYTHONPATH
         try {
             $env:PYTHONPATH = Join-Path $script:RepoRoot 'third_party\Cosys-AirSim\PythonClient'
-            & python $benchmark --host 127.0.0.1 --port $script:Config.ports.cosys_rpc_tcp --duration $DurationSeconds --min-raw-fps $MinRawFps --output $output 2>&1 |
+            $clientArguments = @($benchmark, '--host', '127.0.0.1', '--port', $script:Config.ports.cosys_rpc_tcp, '--duration', $DurationSeconds, '--min-raw-fps', $MinRawFps, '--output', $output)
+            if ($SaveSamples) { $clientArguments += '--save-samples' }
+            & python @clientArguments 2>&1 |
                 Tee-Object -FilePath (Join-Path $runDirectory 'camera-benchmark.log') | ForEach-Object { Write-Host $_ }
             $benchmarkExitCode = $LASTEXITCODE
         } finally {
@@ -118,7 +125,8 @@ try {
         $benchmark = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\camera_benchmark.py')
         $output = Convert-ToWslPath (Join-Path $runDirectory 'camera-benchmark.json')
         $pythonPath = Convert-ToWslPath (Join-Path $script:RepoRoot 'third_party\Cosys-AirSim\PythonClient')
-        $command = "source ~/venv-ardupilot/bin/activate && PYTHONPATH='$pythonPath' python3 '$benchmark' --host '$($settingsInfo.Network.WindowsIp)' --port $($script:Config.ports.cosys_rpc_tcp) --duration $DurationSeconds --min-raw-fps $MinRawFps --output '$output'"
+        $sampleArgument = if ($SaveSamples) { ' --save-samples' } else { '' }
+        $command = "source ~/venv-ardupilot/bin/activate && PYTHONPATH='$pythonPath' python3 '$benchmark' --host '$($settingsInfo.Network.WindowsIp)' --port $($script:Config.ports.cosys_rpc_tcp) --duration $DurationSeconds --min-raw-fps $MinRawFps --output '$output'$sampleArgument"
         $result = Invoke-Wsl -Command $command -AllowFailure
         $result.Output | Tee-Object -FilePath (Join-Path $runDirectory 'camera-benchmark.log') | ForEach-Object { Write-Host $_ }
         if ($result.ExitCode -ne 0) { throw "Camera benchmark failed with code $($result.ExitCode)." }
