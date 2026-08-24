@@ -17,14 +17,14 @@ Gate: repeat the Blocks smoke after every launcher, Cosys or sensor-path change.
 
 ## M1 - real SIM2-location environment
 
-- Build `/Sim2Rural/Maps/SIM2_Rural_WP` from the pinned Copernicus DEM and Sentinel-2 products at `50.31821195033009, 31.137054110768155, 104 m AMSL`.
-- Use a deterministic 4 x 4 km World Partition/LWC collision core for qualification.
+- [done] Build `/Sim2Rural/Maps/SIM2_Rural_WP` from the pinned Copernicus DEM and Sentinel-2 products at `50.31821195033009, 31.137054110768155, 104 m AMSL`.
+- [done] Create a deterministic 4 x 4 km World Partition/LWC collision core with 1024 verified render and collision components.
 - Add georeferencing, landscape material, roads/land-use masks, performant grass, several tree variants, sunflower/corn field representation, HLOD and collision checks.
 - Keep `qualification` offline and reproducible. Keep `visual` separately configurable.
 - Attach `cesium-global` outside the local qualification polygon for effectively unbounded streamed WGS84/ECEF exploration. The local core remains authoritative for flight physics and test collision; Cesium is not treated as an infinite deterministic physics mesh.
 - Pass the existing 15 m square in Blocks and SIM2 Rural with equivalent vehicle behaviour and at least 20 unique 640 x 480 camera frames/s.
 
-Gate: `env doctor sim2-rural`, map-load test, origin/elevation measurement, seam/collision test and flight smoke all PASS before changing readiness to `ready`.
+Structural subgate: `env build-map sim2-rural` now regenerates and reload-verifies the map, exact georeference, Sentinel-2 material, World Partition layout and full collision component count. Runtime gate: `env doctor sim2-rural`, origin/elevation measurement, seam probes, vegetation checks, flight smoke and 20 Hz camera test must all PASS before changing readiness from `preview` to `ready`.
 
 ## M2 - sensor and ROS compatibility
 

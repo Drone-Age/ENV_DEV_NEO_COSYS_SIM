@@ -45,10 +45,12 @@ Do not begin with `--recurse-submodules` on a machine that has not authenticated
 ```powershell
 gh auth status
 .\dev.ps1 setup -Environment sim2-rural
-.\dev.ps1 env doctor sim2-rural
+.\dev.ps1 env build-map sim2-rural
 ```
 
-`env doctor` will reject a package marked `scaffold`; this is expected until its real `.umap` and datasets have passed their own acceptance gate.
+`env build-map` compiles the environment-owned UE editor commandlet, deterministically recreates the 4033 x 4033 World Partition map from the pinned Copernicus/Sentinel-2 inputs, then reloads it and verifies the georeference, transform, imagery material and all 1024 render/collision components. The command is safe to repeat after a clean clone. The generated `.umap`/`.uasset` files are also pinned through Git LFS so ordinary consumers do not need to regenerate them.
+
+`sim2-rural` is currently marked `preview`. Therefore `env doctor sim2-rural`, `build`, `run` and flight tests intentionally reject it until vegetation and the runtime flight/camera gates pass. This prevents a structurally valid map from being mistaken for a qualified environment. `env build-map` is the dedicated structural acceptance command during this stage.
 
 Private environment datasets use Git LFS. After setup, verify that raster files are real PNGs rather than pointer text:
 
@@ -56,6 +58,8 @@ Private environment datasets use Git LFS. After setup, verify that raster files 
 git -C environments\sim2-rural lfs pull
 .\dev.ps1 env list
 ```
+
+Expected `env list` state is `preview` for `sim2-rural`. To prove that the checked-out binary map matches its source contract, rerun `env build-map`; a PASS reports World Partition, EPSG:32636, Sentinel-2 material, 1024 Landscape components and 1024 collision components.
 
 The VINS qualification repositories are also private and are not needed for v0.1. Initialise them only on a qualification workstation:
 

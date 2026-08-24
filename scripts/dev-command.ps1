@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'stop', 'logs', 'env', 'capabilities')][string]$Command,
-    [ValidateSet('list', 'doctor')][string]$EnvironmentCommand = 'list',
+    [ValidateSet('list', 'doctor', 'build-map')][string]$EnvironmentCommand = 'list',
     [string]$Environment = 'blocks',
     [ValidateSet('qualification', 'visual')][string]$RenderProfile = 'qualification',
     [switch]$NoMissionPlanner,
@@ -76,6 +76,55 @@ function Invoke-EnvironmentDoctor([string]$EnvironmentId) {
         Write-Fail 'Environment' $_.Exception.Message
         return 1
     }
+}
+
+function Invoke-EnvironmentBuildMap([string]$EnvironmentId) {
+    if ($EnvironmentId -ne 'sim2-rural') { throw "Automated map generation is not implemented for environment '$EnvironmentId'." }
+    $manifest = Get-EnvironmentManifest -EnvironmentId $EnvironmentId -AllowScaffold
+    $ue = Get-UeRoot
+    $vs = Get-VsInstallPath
+    $msvc = Get-MsvcVersion $vs
+    $compilerVersion = Get-MsvcCompilerVersion $vs $msvc
+    if (-not $ue -or -not $vs -or -not (Test-MsvcVersion $compilerVersion)) { throw 'UE 5.8.1, Visual Studio 17.14 and MSVC 14.44.35211 or newer are required. Run doctor.' }
+    $sdkRoot = Get-WindowsSdkRoot
+    if (-not $sdkRoot -or -not (Test-Path -LiteralPath (Join-Path $sdkRoot 'Lib\10.0.22621.0\um\x64\kernel32.lib'))) { throw 'Windows SDK 10.0.22621.0 is missing. Run doctor.' }
+
+    Write-Step "Staging the $EnvironmentId editor plugin"
+    Stage-EnvironmentPlugin -Manifest $manifest
+    $projectRoot = [IO.Path]::GetFullPath((Join-Path $script:RepoRoot 'unreal\IndraCosysDemo'))
+    $stagedPlugin = [IO.Path]::GetFullPath((Join-Path $projectRoot 'Plugins\Environments\Sim2Rural'))
+    if (-not $stagedPlugin.StartsWith($projectRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $stagedPlugin) -ne 'Sim2Rural') { throw "Unsafe staged plugin path: $stagedPlugin" }
+    $stagedContent = Join-Path $stagedPlugin 'Content'
+    if (Test-Path -LiteralPath $stagedContent) { Remove-Item -LiteralPath $stagedContent -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $stagedContent | Out-Null
+
+    Write-Step 'Building the deterministic Sim2Rural editor commandlet'
+    $project = Join-Path $projectRoot 'IndraCosysDemo.uproject'
+    $buildBat = Join-Path $ue 'Engine\Build\BatchFiles\Build.bat'
+    & $buildBat IndraCosysDemoEditor Win64 Development "-Project=$project" -WaitMutex -FromMsBuild -NoUBA "-CompilerVersion=$compilerVersion" "-VCToolchainVersion=$compilerVersion" '-WindowsSdkVersion=10.0.22621.0'
+    if ($LASTEXITCODE -ne 0) { throw 'Sim2Rural editor commandlet build failed.' }
+
+    $heightmap = Join-Path $script:EnvironmentsRoot 'sim2-rural\data\derived\gis\copdem-2021\height\SIM2_Rural_4033.png'
+    $imagery = Join-Path $script:EnvironmentsRoot 'sim2-rural\data\derived\gis\sentinel2-20250903\imagery\SIM2_Rural_Imagery_4096.png'
+    if (-not (Test-Path -LiteralPath $heightmap) -or -not (Test-Path -LiteralPath $imagery)) { throw 'Pinned Copernicus/Sentinel-2 build inputs are missing. Initialise Git LFS and run env doctor.' }
+    $editor = Join-Path $ue 'Engine\Binaries\Win64\UnrealEditor-Cmd.exe'
+    $buildLog = Join-Path $script:RuntimeRoot 'sim2-rural-build-map.log'
+    Write-Step 'Generating the 4033 x 4033 World Partition landscape and real-map material'
+    & $editor $project '-run=Sim2RuralBuildMap' "-Heightmap=$heightmap" "-Imagery=$imagery" -unattended -nop4 -nosplash -NoSound -AllowCommandletRendering "-abslog=$buildLog"
+    if ($LASTEXITCODE -ne 0) { throw "Sim2Rural map generation failed; see $buildLog" }
+
+    $sourcePlugin = [IO.Path]::GetFullPath((Join-Path $script:EnvironmentsRoot 'sim2-rural\Plugins\Sim2Rural'))
+    $sourceContent = [IO.Path]::GetFullPath((Join-Path $sourcePlugin 'Content'))
+    if (-not $sourceContent.StartsWith($sourcePlugin.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $sourceContent) -ne 'Content') { throw "Unsafe source content path: $sourceContent" }
+    New-Item -ItemType Directory -Force -Path $sourceContent | Out-Null
+    & robocopy.exe $stagedContent $sourceContent /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "Generated Sim2Rural content sync failed with robocopy code $LASTEXITCODE." }
+
+    $verifyLog = Join-Path $script:RuntimeRoot 'sim2-rural-verify-map.log'
+    Write-Step 'Reloading the saved map and verifying World Partition, imagery and collision'
+    & $editor $project '-run=Sim2RuralBuildMap' -VerifyOnly -unattended -nop4 -nosplash -NoSound "-abslog=$verifyLog"
+    if ($LASTEXITCODE -ne 0) { throw "Sim2Rural map verification failed; see $verifyLog" }
+    Write-Pass 'SIM2 Rural map' 'World Partition, 1024 render components, 1024 collision components, EPSG:32636 and Sentinel-2 material'
 }
 
 function Write-Capabilities {
@@ -434,7 +483,11 @@ switch ($Command) {
         Invoke-Item -LiteralPath $latest.FullName
     }
     'env' {
-        if ($EnvironmentCommand -eq 'list') { Invoke-EnvironmentList } else { exit (Invoke-EnvironmentDoctor -EnvironmentId $Environment) }
+        switch ($EnvironmentCommand) {
+            'list' { Invoke-EnvironmentList }
+            'doctor' { exit (Invoke-EnvironmentDoctor -EnvironmentId $Environment) }
+            'build-map' { Invoke-EnvironmentBuildMap -EnvironmentId $Environment }
+        }
     }
     'capabilities' { Write-Capabilities }
 }

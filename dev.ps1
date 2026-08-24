@@ -4,7 +4,7 @@ param(
     [ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'stop', 'logs', 'env', 'capabilities')]
     [string]$Command = 'doctor',
     [Parameter(Position = 1)]
-    [ValidateSet('list', 'doctor')]
+    [ValidateSet('list', 'doctor', 'build-map')]
     [string]$EnvironmentCommand = 'list',
     [Parameter(Position = 2)]
     [string]$Environment = 'blocks',

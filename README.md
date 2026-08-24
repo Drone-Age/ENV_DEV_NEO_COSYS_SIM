@@ -35,10 +35,11 @@ The UE host project is intentionally small. Maps and reusable asset sets are ver
 .\dev.ps1 env list
 .\dev.ps1 env doctor blocks
 .\dev.ps1 setup -Environment sim2-rural
+.\dev.ps1 env build-map sim2-rural
 .\dev.ps1 run -Environment blocks -RenderProfile qualification
 ```
 
-`blocks` is the ready offline baseline. `sim2-rural` is the private 4 x 4 km qualification environment at the exact SIM2 origin, and `cesium-global` is an optional global visual environment. The real Copernicus GLO-30 heightmaps and pinned Sentinel-2 underlay are present in the rural repository. Its UE World Partition map, materials, vegetation and runtime qualification are still incomplete, so it remains `readiness: scaffold`. The launcher rejects incomplete environments until their real UE maps pass the environment acceptance gates. Access to private `Drone-Age` repositories and Git LFS is required to initialise them.
+`blocks` is the ready offline baseline. `sim2-rural` is the private 4 x 4 km qualification environment at the exact SIM2 origin, and `cesium-global` is an optional global visual environment. SIM2 Rural now has a generated UE World Partition Landscape over real Copernicus GLO-30 height and Sentinel-2 imagery, with 1024 verified collision components. It remains `readiness: preview` until vegetation and runtime flight/camera gates pass. The launcher rejects incomplete environments until their acceptance gates pass. Access to private `Drone-Age` repositories and Git LFS is required to initialise them.
 
 Environment architecture, real-map data policy and milestones are documented in [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md). Backend-neutral compatibility with the existing VINS climb/route repositories is specified in [docs/TEST_COMPATIBILITY.md](docs/TEST_COMPATIBILITY.md).
 

@@ -7,7 +7,7 @@
 | Environment | Repository | Purpose | Current gate |
 |---|---|---|---|
 | `blocks` | parent-owned | Small offline flight/camera regression | ready |
-| `sim2-rural` | `Drone-Age/ENV_DEV_NEO_COSYS_ENV_SIM2_RURAL` (private/LFS) | 4 x 4 km real local qualification core at the SIM2 origin, optional Cesium exterior | scaffold; real DEM and Sentinel-2 underlay ready |
+| `sim2-rural` | `Drone-Age/ENV_DEV_NEO_COSYS_ENV_SIM2_RURAL` (private/LFS) | 4 x 4 km real local qualification core at the SIM2 origin, optional Cesium exterior | preview; World Partition/DEM/imagery/collision verified |
 | `cesium-global` | `Drone-Age/ENV_DEV_NEO_COSYS_ENV_CESIUM_GLOBAL` (private/LFS) | Global streamed visual exploration | scaffold |
 | rural assets | `Drone-Age/ENV_DEV_NEO_COSYS_ASSETS_RURAL` (private/LFS) | Reusable trees, grass, sunflower and corn content plugin | scaffold/empty |
 
