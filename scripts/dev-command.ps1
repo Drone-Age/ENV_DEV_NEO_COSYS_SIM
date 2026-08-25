@@ -254,6 +254,14 @@ function Invoke-Doctor {
         $path = Join-Path $script:RepoRoot $entry.Name
         $actual = (& git -C $path rev-parse HEAD 2>$null).Trim()
         if ($actual -eq $entry.Value.commit) { Write-Pass $entry.Name $actual.Substring(0, 12) } else { Write-Fail $entry.Name "expected $($entry.Value.commit), found $actual"; $failures++ }
+        if ($entry.Value.PSObject.Properties.Name -contains 'nested_submodules') {
+            foreach ($nested in $entry.Value.nested_submodules.PSObject.Properties) {
+                $nestedPath = Join-Path $path $nested.Name
+                $nestedActual = (& git -C $nestedPath rev-parse HEAD 2>$null).Trim()
+                $label = "$($entry.Name)/$($nested.Name)"
+                if ($nestedActual -eq $nested.Value) { Write-Pass $label $nestedActual.Substring(0, 12) } else { Write-Fail $label "expected $($nested.Value), found $nestedActual"; $failures++ }
+            }
+        }
     }
 
     foreach ($port in @($script:Config.ports.cosys_control_udp, $script:Config.ports.sitl_sensor_udp, $script:Config.ports.mavlink_tcp, $script:Config.ports.mission_planner_tcp, $script:Config.ports.cosys_rpc_tcp)) {
@@ -269,7 +277,8 @@ function Invoke-Doctor {
 
 function Invoke-Setup {
     Write-Step 'Initialising pinned submodules'
-    & git submodule update --init third_party/Cosys-AirSim third_party/ardupilot
+    $componentPaths = @($script:Lock.submodules.psobject.Properties | ForEach-Object { $_.Name })
+    & git submodule update --init -- $componentPaths
     if ($LASTEXITCODE -ne 0) { throw 'Submodule initialisation failed.' }
     foreach ($entry in $script:Lock.submodules.psobject.Properties) {
         $componentPath = Join-Path $script:RepoRoot $entry.Name
@@ -292,6 +301,15 @@ function Invoke-Setup {
         if ($LASTEXITCODE -ne 0) { throw "Recursive submodule initialisation failed for $($entry.Name)." }
         $actual = (& git -C $componentPath rev-parse HEAD).Trim()
         if ($actual -ne $entry.Value.commit) { throw "$($entry.Name) is not at its pinned commit." }
+        if ($entry.Value.PSObject.Properties.Name -contains 'nested_submodules') {
+            foreach ($nested in $entry.Value.nested_submodules.PSObject.Properties) {
+                $nestedPath = Join-Path $componentPath $nested.Name
+                $nestedActual = (& git -C $nestedPath rev-parse HEAD 2>$null).Trim()
+                if ($nestedActual -ne $nested.Value) {
+                    throw "$($entry.Name)/$($nested.Name) is not at its pinned commit."
+                }
+            }
+        }
     }
 
     Initialize-EnvironmentPackage -EnvironmentId $Environment

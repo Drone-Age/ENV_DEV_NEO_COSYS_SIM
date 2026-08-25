@@ -17,3 +17,14 @@
 [submodule "tests/vins_10km_unit"]
 	path = tests/vins_10km_unit
 	url = https://github.com/Drone-Age/ENV_DEV_NEO_SIM_TEST_VINS_10KM.git
+[submodule "third_party/VINS-NEO"]
+	path = third_party/VINS-NEO
+	url = https://github.com/Drone-Age/VINS-NEO.git
+	branch = indra-sim2-compat
+[submodule "third_party/iMAVROS"]
+	path = third_party/iMAVROS
+	url = https://github.com/Drone-Age/iMAVROS.git
+[submodule "third_party/vio_stack"]
+	path = third_party/vio_stack
+	url = https://github.com/Drone-Age/vio_stack.git
+	branch = indra-sim2-compat

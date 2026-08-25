@@ -40,7 +40,7 @@ Set-Location ENV_DEV_NEO_COSYS_SIM
 .\dev.ps1 doctor
 ```
 
-Do not begin with `--recurse-submodules` on a machine that has not authenticated for the private Drone-Age environment repositories. The default Blocks deployment initialises only the two public source dependencies. For a private map, authenticate `gh`/Git first and select it explicitly:
+Do not begin with `--recurse-submodules` on a machine that has not authenticated for the private Drone-Age environment repositories. The default Blocks deployment initialises the complete pinned source set (Cosys-AirSim, ArduPilot, VINS-NEO, iMAVROS and vio_stack). For a private map, authenticate `gh`/Git first and select it explicitly:
 
 ```powershell
 gh auth status
@@ -64,7 +64,7 @@ git -C environments\sim2-rural lfs pull
 
 Expected `env list` state is `preview` for `sim2-rural`. To prove that the checked-out binary map matches its source contract, rerun `env build-map`; a PASS reports World Partition, EPSG:32636, Sentinel-2 material, 1024 Landscape components and 1024 collision components.
 
-The VINS qualification repositories are also private and are not needed for v0.1. Initialise them only on a qualification workstation:
+The VINS qualification test repositories are separate from the source components and are not needed for v0.1. Initialise them only on a qualification workstation:
 
 ```powershell
 git submodule update --init -- tests/vins_climb_unit tests/vins_10km_unit
@@ -75,8 +75,13 @@ Their expected commits are recorded in `tests/test-registry.json`. Until `dev.ps
 
 The expected source identities are enforced by `components.lock.json`:
 
-- `third_party/Cosys-AirSim` at `cf79da61589bf3efeb970f5a27029abdd837d442`, fork branch `indra-ue5.8`, based on release `5.8-v3.4.1`.
+- `third_party/Cosys-AirSim` at `eb4d858a1f9baf1e3c3346aba4e5cae3fd0c11a8`, fork branch `indra-ue5.8`, based on release `5.8-v3.4.1`.
 - `third_party/ardupilot` at `ebceaa75aa175c6b6b52f69a8da8337e2919d62b`.
+- `third_party/VINS-NEO` at `0c09aecfebbe7b6bcdd55a3697aef6ba76ececc1`, branch `indra-sim2-compat`.
+- `third_party/iMAVROS` at `2bbd27b1a7b40bbf000d664b058f09b5db9dd518`.
+- `third_party/vio_stack` at `a4e814e5a9138f7be63394b2c1cdac05d13d2a9c`, branch `indra-sim2-compat`.
+
+The vio_stack lock also verifies its exact nested iHUB, iHUB-STM, iCAM and iIMU revisions. Compatibility branches publish the previously local SIM2 commits without changing any component's `main` branch.
 
 Do not continue while `doctor` reports a failure. A Mission Planner warning before `setup` is expected.
 
