@@ -137,6 +137,7 @@ function Invoke-EnvironmentBuildMap([string]$EnvironmentId) {
 
 function Get-BackendCapabilities {
     $manifest = Get-EnvironmentManifest -EnvironmentId $Environment -AllowScaffold
+    $sensorProfile = Get-Content -LiteralPath (Join-Path $script:RepoRoot 'config\ros2\sensor-profile.json') -Raw | ConvertFrom-Json
     return [ordered]@{
         schema = 1
         backend = 'cosys-airsim'
@@ -159,7 +160,8 @@ function Get-BackendCapabilities {
         }
         camera = [ordered]@{
             mode = 'fixed-rate-async-gpu-readback'
-            producer_hz = 21.0
+            producer_hz = [double]$sensorProfile.camera.producer_hz
+            ros_published_hz = [double]$sensorProfile.camera.published_hz
             qualified_resolutions = @(
                 [ordered]@{ width = 640; height = 480; minimum_fps = 20.0 }
                 [ordered]@{ width = 1280; height = 720; minimum_fps = 10.0 }
@@ -382,14 +384,34 @@ function Start-RosBridge([string]$RunDirectory, [object]$Settings) {
     $command = "bash '$launcher' '$repoWsl' '$runWsl' '$($Settings.Network.WindowsIp)' '$($script:Config.ports.cosys_rpc_tcp)' '$profile' '$domainId'"
     $result = Invoke-Wsl -Command $command -AllowFailure
     if ($result.ExitCode -ne 0) { throw "Unable to launch ROS 2 bridge: $($result.Output -join ' ')" }
-    $deadline = (Get-Date).AddSeconds(30)
+    # A running process and a status file only prove that ROS initialized.  On a
+    # cold Unreal launch the asynchronous camera can still be waiting for its
+    # first render-thread readback, so require one accepted sample from every
+    # advertised sensor before declaring the graph ready.
+    $deadline = (Get-Date).AddSeconds(180)
     $ready = $false
     while ((Get-Date) -lt $deadline) {
         $check = Invoke-Wsl -Command "test -s '$runWsl/ros2/wsl.pid' && kill -0 `$(cat '$runWsl/ros2/wsl.pid') && test -s '$runWsl/ros2/status.json'" -AllowFailure
-        if ($check.ExitCode -eq 0) { $ready = $true; break }
+        if ($check.ExitCode -eq 0) {
+            try {
+                $status = Get-Content -LiteralPath (Join-Path $RunDirectory 'ros2\status.json') -Raw | ConvertFrom-Json
+                $topics = $status.topics
+                $required = @('/sim/ground_truth/odom', '/sim/body/imu', '/sim/camera/imu', '/sim/camera/image_raw')
+                $ready = $true
+                foreach ($topic in $required) {
+                    $sample = $topics.PSObject.Properties[$topic].Value
+                    if ($null -eq $sample -or [int64]$sample.count -lt 1) { $ready = $false; break }
+                }
+                if ($ready) { break }
+            } catch {
+                # The bridge replaces status.json atomically; retry while the
+                # first complete sensor snapshot is being written.
+                $ready = $false
+            }
+        }
         Start-Sleep -Milliseconds 500
     }
-    if (-not $ready) { throw "ROS 2 bridge did not become ready; see $RunDirectory\ros2\bridge.log" }
+    if (-not $ready) { throw "ROS 2 bridge did not publish all required sensors within 180 seconds; see $RunDirectory\ros2\bridge.log" }
     Write-Pass 'ROS 2 bridge' "domain $domainId, SIM2-compatible topics published"
 }
 
@@ -422,12 +444,16 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
     $editor = Join-Path $ue 'Engine\Binaries\Win64\UnrealEditor.exe'
     $project = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\IndraCosysDemo.uproject'
     $ueLog = Join-Path $runDirectory 'unreal\Unreal.log'
+    $sensorProfile = Get-Content -LiteralPath (Join-Path $script:RepoRoot 'config\ros2\sensor-profile.json') -Raw | ConvertFrom-Json
     $arguments = @(
         $project, $environmentManifest.map_path,
         '-game', '-windowed', '-ResX=1280', '-ResY=720', '-log',
         "-abslog=$ueLog", "-settings=$($settings.Path)",
         "-IndraRenderProfile=$RenderProfile", "-IndraEnvironment=$($environmentManifest.id)",
-        '-IndraAsyncCamera', '-IndraCameraName=0', '-IndraCameraHz=21'
+        '-IndraAsyncCamera', '-IndraCameraName=0',
+        "-IndraCameraHz=$([double]$sensorProfile.camera.producer_hz)",
+        "-IndraCameraWidth=$([int]$sensorProfile.camera.width)",
+        "-IndraCameraHeight=$([int]$sensorProfile.camera.height)"
     )
     if ($ForTest) { $arguments += @('-Unattended', '-NoSplash') }
     if ($Headless) { $arguments += '-RenderOffscreen' }

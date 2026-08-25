@@ -179,6 +179,18 @@ After the ordinary flight PASS, verify the optional SIM2-compatible sensor graph
 
 The first command requires all six topics, exact frame IDs, strictly increasing simulation timestamps, valid 640x480 RGB8 payload/calibration, synchronized image metadata and wall-clock delivery rates of at least 20 Hz for clock/odom, 50 Hz for both initial IMU feeds and 10 Hz for image/camera-info. The second repeats the full flight with the bridge active. Neither command launches Mission Planner. `setup` uses an existing `/opt/iros2j` when present; a clean Ubuntu 24.04 machine receives the official `/opt/ros/jazzy` packages and may request its sudo password.
 
+Do not change WSL networking while SIM2 or NewSIM is running. A controlled camera-transport A/B experiment is available only after both stacks are stopped:
+
+```powershell
+.\scripts\wsl-network-mode.ps1 -Action Status
+.\scripts\wsl-network-mode.ps1 -Action EnableMirrored
+.\dev.ps1 doctor
+# repeat flight, ros-test and camera-test evidence
+.\scripts\wsl-network-mode.ps1 -Action Restore
+```
+
+The helper backs up the exact previous `.wslconfig`, refuses to shut WSL down when simulator processes are present and refuses to overwrite later user edits during rollback. Mirrored mode is not a deployment prerequisite and must not be promoted without flight, UDP/TCP, ROS and camera evidence.
+
 ## 7. Camera qualification
 
 Run the two supported resolutions without Mission Planner:
@@ -187,7 +199,7 @@ Run the two supported resolutions without Mission Planner:
 .\dev.ps1 camera-test
 ```
 
-The live profile is Scene image type, raw RGB, `ForceUpdate=false`, Lumen GI/reflections disabled for the sensor capture, a 640x360 diagnostic viewport, and the fork's 21 Hz asynchronous GPU-readback producer. Acceptance is at least 20 unique frames/s at 640x480 and 10 unique frames/s at 1280x720. Every run analyzes early/late raw frames and rejects black or uniform content; `-SaveSamples` additionally preserves those frames as PPM artifacts. The viewport size does not change sensor output resolution. Do not use PNG compression in a control or VINS path; encode or record frames asynchronously downstream. See [CAMERA_PERFORMANCE.md](CAMERA_PERFORMANCE.md) for measured results and implementation details.
+The live profile is Scene image type, raw RGB, `ForceUpdate=false`, Lumen GI/reflections disabled for the sensor capture, a 640x360 diagnostic viewport, the fork's 30 Hz asynchronous GPU-readback producer and a 25 Hz ROS publish cap. Acceptance is at least 20 unique frames/s at 640x480 and 10 unique frames/s at 1280x720. Every run analyzes early/late raw frames and rejects black or uniform content; `-SaveSamples` additionally preserves those frames as PPM artifacts. The viewport size does not change sensor output resolution. Do not use PNG compression in a control or VINS path; encode or record frames asynchronously downstream. See [CAMERA_PERFORMANCE.md](CAMERA_PERFORMANCE.md) for measured results and implementation details.
 
 Do not add `-RenderOffscreen` to the normal acceptance run. It reduced camera throughput on the qualified workstation and can also reduce simulation timing margin. It remains an explicit `-Headless` diagnostic option only.
 

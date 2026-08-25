@@ -67,10 +67,20 @@ def run_case(
     sample_path: pathlib.Path | None = None,
 ) -> dict:
     request = [airsim.ImageRequest(camera, airsim.ImageType.Scene, False, compress)]
-    for _ in range(warmup):
+    # The asynchronous producer intentionally returns a zero-sized response
+    # while Unreal is still producing its first render-thread readback.  Treat
+    # that as readiness back-pressure, not a broken camera.  This also makes a
+    # cold shader-cache benchmark deterministic.
+    warmup_deadline = time.monotonic() + 60.0
+    completed_warmups = 0
+    while completed_warmups < warmup:
         response = client.simGetImages(request, vehicle_name=vehicle)[0]
         if response.width <= 0 or response.height <= 0:
-            raise RuntimeError("camera returned an empty warm-up frame")
+            if time.monotonic() >= warmup_deadline:
+                raise RuntimeError("camera did not produce its first frame within 60 seconds")
+            time.sleep(0.01)
+            continue
+        completed_warmups += 1
 
     samples = []
     started = time.perf_counter()

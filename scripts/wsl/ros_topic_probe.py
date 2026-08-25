@@ -7,10 +7,13 @@ import argparse
 import json
 import math
 import pathlib
+import threading
 import time
 
 import rclpy
 from nav_msgs.msg import Odometry
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rosgraph_msgs.msg import Clock
@@ -27,7 +30,10 @@ class TopicProbe(Node):
         super().__init__("indra_cosys_topic_probe")
         sensor_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
-            depth=2000,
+            # This is a live-cadence acceptance probe, not an IMU recorder.
+            # A deep Python queue makes stale high-rate IMU deserialization
+            # starve the 0.9 MB RGB callback and under-report camera delivery.
+            depth=10,
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
         )
@@ -43,17 +49,21 @@ class TopicProbe(Node):
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
         )
+        truth_group = MutuallyExclusiveCallbackGroup()
+        imu_group = MutuallyExclusiveCallbackGroup()
+        image_group = MutuallyExclusiveCallbackGroup()
+        info_group = MutuallyExclusiveCallbackGroup()
         self.stamps: dict[str, list[int]] = {name: [] for name in ("clock", "odom", "body_imu", "camera_imu", "image", "camera_info")}
         self.arrivals: dict[str, list[float]] = {name: [] for name in self.stamps}
         self.frames: dict[str, set[str]] = {name: set() for name in ("odom", "odom_child", "body_imu", "camera_imu", "image", "camera_info")}
         self.image_shapes: set[tuple[int, int, str, int]] = set()
         self.camera_models: list[tuple[list[float], list[float], str]] = []
-        self.create_subscription(Clock, "/clock", self.clock_callback, clock_qos)
-        self.create_subscription(Odometry, "/sim/ground_truth/odom", self.odom_callback, sensor_qos)
-        self.create_subscription(Imu, "/sim/body/imu", lambda msg: self.imu_callback("body_imu", msg), sensor_qos)
-        self.create_subscription(Imu, "/sim/camera/imu", lambda msg: self.imu_callback("camera_imu", msg), sensor_qos)
-        self.create_subscription(Image, "/sim/camera/image_raw", self.image_callback, image_qos)
-        self.create_subscription(CameraInfo, "/sim/camera/camera_info", self.info_callback, image_qos)
+        self.create_subscription(Clock, "/clock", self.clock_callback, clock_qos, callback_group=truth_group)
+        self.create_subscription(Odometry, "/sim/ground_truth/odom", self.odom_callback, sensor_qos, callback_group=truth_group)
+        self.create_subscription(Imu, "/sim/body/imu", lambda msg: self.imu_callback("body_imu", msg), sensor_qos, callback_group=imu_group)
+        self.create_subscription(Imu, "/sim/camera/imu", lambda msg: self.imu_callback("camera_imu", msg), sensor_qos, callback_group=imu_group)
+        self.create_subscription(Image, "/sim/camera/image_raw", self.image_callback, image_qos, callback_group=image_group)
+        self.create_subscription(CameraInfo, "/sim/camera/camera_info", self.info_callback, image_qos, callback_group=info_group)
 
     def clock_callback(self, message: Clock) -> None:
         self.arrivals["clock"].append(time.monotonic())
@@ -95,6 +105,22 @@ def wall_rate(arrivals: list[float]) -> float:
     return (len(arrivals) - 1) / (arrivals[-1] - arrivals[0])
 
 
+def worst_full_window_rate(arrivals: list[float], window_s: float = 2.0) -> float:
+    if len(arrivals) < 2 or arrivals[-1] - arrivals[0] < window_s:
+        return 0.0
+    worst = math.inf
+    right = 0
+    for left, start in enumerate(arrivals):
+        end = start + window_s
+        if end > arrivals[-1]:
+            break
+        right = max(right, left)
+        while right < len(arrivals) and arrivals[right] < end:
+            right += 1
+        worst = min(worst, (right - left) / window_s)
+    return 0.0 if not math.isfinite(worst) else worst
+
+
 def monotonic(stamps: list[int]) -> bool:
     return len(stamps) > 1 and all(right > left for left, right in zip(stamps, stamps[1:]))
 
@@ -109,16 +135,33 @@ def main() -> int:
 
     rclpy.init()
     node = TopicProbe()
-    deadline = time.monotonic() + args.duration
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
+    spin_thread = threading.Thread(target=executor.spin, name="ros-topic-probe", daemon=False)
+    spin_thread.start()
     try:
-        while time.monotonic() < deadline:
-            rclpy.spin_once(node, timeout_sec=0.1)
+        time.sleep(args.duration)
     finally:
+        executor.shutdown(wait_for_threads=True)
+        spin_thread.join(timeout=5.0)
+        if spin_thread.is_alive():
+            raise RuntimeError("ROS topic probe executor did not stop cleanly")
+        # Jazzy's MultiThreadedExecutor can leave completed callback futures in
+        # its submission list when shutdown wakes the spin loop. Draining them
+        # prevents misleading "exception was never retrieved" warnings when
+        # handles are destroyed during an otherwise clean shutdown.
+        for future in list(executor._futures):
+            try:
+                future.result()
+            except Exception:
+                pass
+        executor.remove_node(node)
         node.destroy_node()
         rclpy.shutdown()
 
     rates = {name: rate(stamps) for name, stamps in node.stamps.items()}
     wall_rates = {name: wall_rate(arrivals) for name, arrivals in node.arrivals.items()}
+    image_worst_2s_hz = worst_full_window_rate(node.arrivals["image"])
     monotonicity = {name: monotonic(stamps) for name, stamps in node.stamps.items()}
     expected_frames = {
         "odom": {profile["ground_truth"]["frame_id"]},
@@ -148,6 +191,7 @@ def main() -> int:
         "all_topics_present": all(node.stamps[name] for name in node.stamps),
         "strictly_monotonic_timestamps": all(monotonicity.values()),
         "minimum_initial_rates": all(wall_rates[name] >= minimum for name, minimum in minimum_rates.items()),
+        "image_worst_full_2s_at_least_10_hz": image_worst_2s_hz >= 10.0,
         "frame_contract": frame_contract,
         "image_contract": node.image_shapes == {expected_shape},
         "camera_model": camera_model_valid,
@@ -162,6 +206,7 @@ def main() -> int:
         "counts": {name: len(stamps) for name, stamps in node.stamps.items()},
         "rates_hz": rates,
         "wall_rates_hz": wall_rates,
+        "image_worst_full_2s_hz": image_worst_2s_hz,
         "monotonic": monotonicity,
         "frames": {name: sorted(values) for name, values in node.frames.items()},
         "image_shapes": [list(shape) for shape in sorted(node.image_shapes)],

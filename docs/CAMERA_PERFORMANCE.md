@@ -7,7 +7,7 @@ INDRA acceptance requires at least 20 FPS at 640x480 and at least 10 FPS at 1280
 - one Scene camera;
 - 640x480 or 1280x720;
 - uncompressed RGB returned by `simGetImages`;
-- `ForceUpdate=false` and the fork's fixed-rate asynchronous producer at 21 Hz;
+- `ForceUpdate=false`, a 30 Hz asynchronous GPU producer and a 25 Hz ROS publish cap;
 - Lumen GI and Lumen reflections disabled for the sensor capture;
 - PNG/JPEG encoding, display and recording performed asynchronously downstream.
 - a 640x360 operator/diagnostic viewport during qualification (sensor resolution is unchanged).
@@ -26,6 +26,9 @@ The reference machine is Ryzen 5 8400F, RTX 5060 Ti 16 GB, UE 5.8.1 and Cosys Bl
 | Async, Windows-native client, monotonic fix + cadence gate | 1280x720 | raw RGB | 20.56 | 48.56 ms |
 | Async, WSL2 NAT client, cadence gate | 1280x720 | raw RGB | 15.00 | 66.86 ms |
 | Async, WSL2 NAT, named IMUs removed (A/B) | 1280x720 | raw RGB | 14.38 | 69.79 ms |
+| ROS 2 Jazzy over WSL2 NAT, repeat | 640x480 | raw RGB | 18.16 wall / 15.0 worst 2 s | live-depth probe |
+| ROS 2 Jazzy over WSL2 NAT, best repeat | 640x480 | raw RGB | 21.20 wall / 19.0 worst 2 s | live-depth probe |
+| ROS 2 bridge during complete square flight | 640x480 | raw RGB | 23.31 wall | 2,852 frames |
 | On demand | 640x480 | raw RGB | 21.96-23.64 | 42.29-45.54 ms |
 | On demand, 1280x720 viewport | 1280x720 | raw RGB | 19.10-20.31 | 49.22-52.36 ms |
 | On demand, 640x360 viewport | 1280x720 | raw RGB | 20.25 | 49.37 ms |
@@ -59,11 +62,13 @@ This is not primarily a WSL networking problem. A Windows-native client measured
 
 The stock Cosys/AirSim request path is synchronous. `RenderRequest.cpp` schedules capture on Unreal's game thread, waits for the render command, calls `ReadSurfaceData` to copy the GPU render target into CPU memory, repacks pixels into an RGB vector and optionally compresses PNG on the CPU. `UnrealImageCapture.cpp` waits for that operation before returning the RPC response. With only one request in flight, frame rate is consequently bounded by end-to-end request latency.
 
-`Drone-Age/Cosys-AirSim:indra-ue5.8` now has an opt-in producer enabled with `-IndraAsyncCamera -IndraCameraName=0 -IndraCameraHz=21`. It schedules `CaptureSceneDeferred`, uses three `FRHIGPUTextureReadback` slots, and publishes the latest completed raw RGB frame with its original simulation timestamp. Unsupported request types fall back to stock Cosys. Explicit `SRVMask -> CopySrc -> SRVMask` transitions prevent zero-filled D3D12 copies, and readback resources are recreated when render-target dimensions or format change.
+`Drone-Age/Cosys-AirSim:indra-ue5.8` now has an opt-in producer enabled with `-IndraAsyncCamera -IndraCameraName=0 -IndraCameraHz=30 -IndraCameraWidth=640 -IndraCameraHeight=480`. It owns a capture-component-scoped render target, schedules `CaptureSceneDeferred` from the viewport, resolves the texture only on Unreal's render thread, uses three `FRHIGPUTextureReadback` slots, and publishes the latest completed raw RGB frame with its original simulation timestamp. During cold start, supported requests receive an explicit empty warm-up response instead of falling back to the blocking stock renderer. Unsupported request types still fall back to stock Cosys. Explicit `SRVMask -> CopySrc -> SRVMask` transitions prevent zero-filled D3D12 copies, and readback resources are recreated when render-target dimensions or format change.
+
+The dedicated target fixes a UE 5.8.1 lifecycle race: Cosys can replace its transient `TextureTarget` after `UnrealImageCapture` is constructed, and `GameThread_GetRenderTargetResource()` must not be dereferenced on the game thread. The producer keeps a stable owned target and performs `GetRenderTargetTexture()` inside the render command. Evidence `2026-08-25_064408_test_17bb9394` passed every ROS contract at 18.16 wall FPS with a 15 FPS worst two-second window. The full flight `2026-08-25_064520_test_1220bb93` passed TAKEOFF, all square waypoints, LAND and DISARM while the bridge sustained 23.31 image FPS with no camera RPC error.
 
 `ForceUpdate=true` is not a fix. In `PIPCamera.cpp` it enables `bCaptureEveryFrame` and `bCaptureOnMovement`; the benchmark shows that this competes with explicit image requests and reduces throughput. Render-offscreen also reduced throughput on this UE 5.8.1 build and is not part of the qualified profile.
 
-The frequently cited Cosys issue #82 workaround disables `bCaptureEveryFrame` and `bCaptureOnMovement` for every `SceneCapture2D`. Its author reported viewport FPS increasing from 10-12 to 58-63, but also reported a stall while collecting images; the original reporter later could not reproduce the improvement. It is still a useful duplicate-rendering check, not a complete sensor-throughput fix. INDRA already satisfies that check through `ForceUpdate=false` and performs capture at an explicit 21 Hz.
+The frequently cited Cosys issue #82 workaround disables `bCaptureEveryFrame` and `bCaptureOnMovement` for every `SceneCapture2D`. Its author reported viewport FPS increasing from 10-12 to 58-63, but also reported a stall while collecting images; the original reporter later could not reproduce the improvement. It is still a useful duplicate-rendering check, not a complete sensor-throughput fix. INDRA already satisfies that check through `ForceUpdate=false` and performs capture at an explicit 30 Hz with a 25 Hz ROS publication cap.
 
 The project already sets `bThrottleCPUWhenNotForeground=False` in `DefaultEditorPerProjectUserSettings.ini`, matching the Cosys custom-environment guidance. The Windows host also uses the High performance power plan. Do not treat either setting as a hypothetical fix: keep them enabled, then use `gpu-metrics.csv` from each benchmark bundle to determine whether the run is GPU-saturated. Low or intermittent GPU utilization together with high RPC latency points to the synchronous render/readback pipeline, not insufficient shader throughput.
 
@@ -77,7 +82,7 @@ The project already sets `bThrottleCPUWhenNotForeground=False` in `DefaultEditor
 
 ## Ranked follow-up variants
 
-1. **Harden the current asynchronous RPC path (selected).** Measure cadence tails, Unreal game/render/RHI threads, GPU frame time, VRAM and clock/power state during a full flight. Keep a 21 Hz producer and latest-frame semantics; do not let a slow subscriber back-pressure simulation.
+1. **Harden the current asynchronous RPC path (selected).** Measure cadence tails, Unreal game/render/RHI threads, GPU frame time, VRAM and clock/power state during a full flight. Keep a 30 Hz producer, 25 Hz ROS cap and latest-frame semantics; do not let a slow subscriber back-pressure simulation.
 2. **WSL mirrored-network A/B test (next, reversible).** The host is currently in default NAT mode and has no `%UserProfile%\.wslconfig`. On supported Windows 11/WSL builds, test `networkingMode=mirrored` and `127.0.0.1` against the same NAT evidence. This requires `wsl --shutdown`, can affect SIM2 networking, and is therefore opt-in until both flight and camera gates pass. Do not promote it from one throughput result; also verify SITL UDP, MAVLink and ROS discovery/firewall behaviour.
 3. **Qualification render profile.** Keep one Scene layer, `ForceUpdate=false`, no sensor Lumen GI/reflections, no motion blur/depth of field and no synchronous PNG. Reduce shadows, translucency or foliage only when Unreal Insights/GPU timing identifies them and VINS feature/photometric tests remain green.
 4. **Packaged Development executable.** Compare it with `UnrealEditor -game` under the exact same scene, route and camera gate. Adopt it for qualification only if it measurably reduces jitter and preserves diagnostics/deployment reproducibility.
@@ -90,7 +95,7 @@ The project already sets `bThrottleCPUWhenNotForeground=False` in `DefaultEditor
 
 Camera transport optimization starts only after a successful automated `TAKEOFF -> route -> LAND -> DISARM` flight. That prerequisite is already evidenced by the rural flight bundles listed in `ROADMAP.md`; Mission Planner is not launched by any camera experiment.
 
-Run the alternatives against the same 1280x720 Scene feed, 20-second duration, route, render profile and 21 Hz producer. Preserve a baseline bundle before each system-level change and test in this order:
+Run the alternatives against the same 1280x720 Scene feed, 20-second duration, route, render profile and 30 Hz producer. Preserve a baseline bundle before each system-level change and test in this order:
 
 1. **Instrument, do not tune blindly.** Capture Unreal Insights timing for game/render/RHI threads, `stat unit`, `stat gpu`, `stat rhi`, GPU clocks/utilization/power, RPC latency and network throughput. A high GPU frame time selects render-profile work; low GPU occupancy plus high delivery latency selects transport work.
 2. **WSL2 NAT versus mirrored networking.** Compare the current Windows-host IP path with mirrored `127.0.0.1`. This is an opt-in machine change with a documented rollback and requires rechecking SITL UDP, MAVLink TCP, ROS 2 discovery and firewall behaviour after `wsl --shutdown`.
@@ -100,6 +105,8 @@ Run the alternatives against the same 1280x720 Scene feed, 20-second duration, r
 6. **Encoded operator stream only.** Evaluate NVENC/GStreamer for viewing and recording, but do not substitute it for VINS raw RGB unless feature count, photometric quality, latency and timestamp gates prove equivalence.
 
 For every candidate, PASS requires non-black/non-uniform images, strictly increasing simulation timestamps, zero counted duplicate frames, at least 10 unique FPS in every complete two-second window at 1280x720, and no flight/EKF regression. Promotion to the preferred path additionally targets at least 18 average FPS, no p95 delivery gap above 100 ms, and stable 20 Hz during the later VINS flight. GPU/Unreal setting changes must also retain the required VINS feature count and calibration.
+
+The mirrored-network experiment is intentionally opt-in because applying `.wslconfig` requires `wsl --shutdown`. First stop both NewSIM and the reference SIM2, then use `scripts/wsl-network-mode.ps1 -Action EnableMirrored`. The script refuses to proceed while ArduCopter, Gazebo, Cosys bridge or an active NewSIM bundle is detected, preserves the exact previous config, and makes the launchers use loopback for both control/sensor directions. Run `doctor`, the flight test, ROS topic test and both camera resolutions before drawing a conclusion. Use `-Action Restore` to return to the byte-preserved prior configuration; it refuses to overwrite a `.wslconfig` edited by the user during the experiment.
 
 Do not use `ClockSpeed < 1` to manufacture a wall-clock FPS result: it changes the real-time meaning of the test. Do not count viewport FPS, RPC call count or repeated timestamps as sensor FPS.
 

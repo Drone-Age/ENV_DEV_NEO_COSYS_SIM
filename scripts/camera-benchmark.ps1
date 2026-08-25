@@ -53,6 +53,7 @@ try {
     $editor = Join-Path $ue 'Engine\Binaries\Win64\UnrealEditor.exe'
     $project = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\IndraCosysDemo.uproject'
     $ueLog = Join-Path $runDirectory 'unreal\Unreal.log'
+    $sensorProfile = Get-Content -LiteralPath (Join-Path $script:RepoRoot 'config\ros2\sensor-profile.json') -Raw | ConvertFrom-Json
     $arguments = @(
         $project,
         $environmentManifest.map_path,
@@ -62,7 +63,11 @@ try {
         "-IndraRenderProfile=$RenderProfile", "-IndraEnvironment=$($environmentManifest.id)"
     )
     if (-not $DisableAsyncCamera) {
-        $arguments += @('-IndraAsyncCamera', '-IndraCameraName=0', '-IndraCameraHz=21')
+        $arguments += @(
+            '-IndraAsyncCamera', '-IndraCameraName=0',
+            "-IndraCameraHz=$([double]$sensorProfile.camera.producer_hz)",
+            "-IndraCameraWidth=$Width", "-IndraCameraHeight=$Height"
+        )
     }
     if ($Offscreen) { $arguments += '-RenderOffscreen' }
     $ueProcess = Start-Process -FilePath $editor -ArgumentList $arguments -WorkingDirectory (Split-Path -Parent $project) -PassThru

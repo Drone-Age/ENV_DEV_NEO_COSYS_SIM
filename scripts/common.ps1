@@ -211,6 +211,18 @@ function Convert-ToWslPath([string]$WindowsPath) {
 }
 
 function Get-NetworkInfo {
+    $wslConfig = Join-Path $env:USERPROFILE '.wslconfig'
+    $mirrored = $false
+    if (Test-Path -LiteralPath $wslConfig) {
+        $inWsl2 = $false
+        foreach ($line in Get-Content -LiteralPath $wslConfig) {
+            if ($line -match '^\s*\[(?<section>[^]]+)\]\s*$') { $inWsl2 = $Matches.section -ieq 'wsl2'; continue }
+            if ($inWsl2 -and $line -match '^\s*networkingMode\s*=\s*mirrored\s*(?:[#;].*)?$') { $mirrored = $true; break }
+        }
+    }
+    if ($mirrored) {
+        return [pscustomobject]@{ WslIp = '127.0.0.1'; WindowsIp = '127.0.0.1'; Mode = 'mirrored' }
+    }
     $wslIpResult = Invoke-Wsl -Command 'hostname -I'
     $wslIp = (([string]($wslIpResult.Output -join ' ')).Trim() -split '\s+')[0]
     $windowsIpResult = Invoke-Wsl -Command 'ip route show default'
@@ -221,7 +233,7 @@ function Get-NetworkInfo {
     $parsedWindows = $null
     if (-not [Net.IPAddress]::TryParse($wslIp, [ref]$parsedWsl)) { throw "Invalid WSL IP: $wslIp" }
     if (-not [Net.IPAddress]::TryParse($windowsIp, [ref]$parsedWindows)) { throw "Invalid Windows host IP: $windowsIp" }
-    return [pscustomobject]@{ WslIp = $wslIp; WindowsIp = $windowsIp }
+    return [pscustomobject]@{ WslIp = $wslIp; WindowsIp = $windowsIp; Mode = 'nat' }
 }
 
 function New-RunDirectory {
