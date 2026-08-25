@@ -38,11 +38,20 @@ nohup setsid "$supervisor" "$ardupilot/build/sitl/bin/arducopter" \
 
 pid=$!
 printf '%s\n' "$pid" >"$run_dir/sitl/wsl.pid"
-sleep 2
-kill -0 "$pid"
-child_pid=$(pgrep -P "$pid" -x arducopter | head -n 1)
-if [[ -z "$child_pid" ]]; then
-    echo "ArduCopter child process was not created" >&2
-    exit 70
-fi
-printf '%s\n' "$child_pid" >"$run_dir/sitl/sitl.pid"
+child_pid=""
+for _ in $(seq 1 100); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+        echo "ArduCopter supervisor exited during startup" >&2
+        tail -n 20 "$run_dir/sitl/sitl.log" >&2 || true
+        exit 70
+    fi
+    child_pid=$(pgrep -P "$pid" -x arducopter | head -n 1 || true)
+    if [[ -n "$child_pid" ]]; then
+        printf '%s\n' "$child_pid" >"$run_dir/sitl/sitl.pid"
+        exit 0
+    fi
+    sleep 0.1
+done
+echo "ArduCopter child process was not created within 10 seconds" >&2
+tail -n 20 "$run_dir/sitl/sitl.log" >&2 || true
+exit 70

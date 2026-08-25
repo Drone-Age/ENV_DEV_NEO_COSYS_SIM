@@ -7,7 +7,6 @@
       - imu
       - local_position
       - odometry
-      - setpoint_position
       - sys_status
       - sys_time
       - waypoint

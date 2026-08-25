@@ -2,7 +2,7 @@
 
 ## Qualified target
 
-INDRA acceptance requires at least 20 FPS at 640x480 and at least 10 FPS at 1280x720. The asynchronous path has already demonstrated approximately 20.5 FPS at both resolutions. The 1280x720 release floor remains 10 FPS so later scene-quality work cannot silently turn the demonstrated 20 Hz into a hard dependency. The live sensor path therefore uses:
+INDRA acceptance requires at least 20 FPS at 640x480 and at least 10 FPS at 1280x720. After removing the ArduCopter backend's game-thread UDP wait, the live-SITL asynchronous path demonstrated 26.77 FPS at 640x480 and 24.03 FPS at 1280x720. The 1280x720 release floor remains 10 FPS so later scene-quality work cannot silently turn the demonstrated 20 Hz into a hard dependency. The live sensor path therefore uses:
 
 - one Scene camera;
 - 640x480 or 1280x720;
@@ -20,6 +20,9 @@ The reference machine is Ryzen 5 8400F, RTX 5060 Ti 16 GB, UE 5.8.1 and Cosys Bl
 
 | Mode | Resolution | Format | Unique FPS | Mean latency |
 |---|---:|---:|---:|---:|
+| Nonblocking ArduCopter backend + live SITL, Blocks | 640x480 | raw RGB | 26.77 / 24.0 worst 2 s | 37.31 ms |
+| Nonblocking ArduCopter backend + live SITL, Blocks | 1280x720 | raw RGB | 24.03 / 18.5 worst 2 s | 41.54 ms |
+| Nonblocking ArduCopter backend + live SITL, Blocks | 1280x720 | PNG | 6.89 / 6.0 worst 2 s | 145.12 ms |
 | Async GPU readback, SIM2 Rural, 20 s | 640x480 | raw RGB | 20.50 | 48.77 ms |
 | Async GPU readback, SIM2 Rural, 20 s | 1280x720 | raw RGB | 20.49 | 48.78 ms |
 | Async GPU readback + pixel gate | 1280x720 | raw RGB | 19.80 | 50.42 ms |
@@ -64,7 +67,9 @@ Evidence bundles from this measurement remain local under `logs/` and are intent
 
 ## Root cause and implemented fix
 
-This is not primarily a WSL networking problem. A Windows-native client measured 22.51 FPS at 640x480 versus 23.64 FPS from WSL.
+This is not primarily a GPU or WSL networking problem. A Windows-native client measured 22.51 FPS at 640x480 versus 23.64 FPS from WSL, and the final live-SITL raw path reached 24.03 FPS at 1280x720 while the RTX 5060 Ti remained well below saturation.
+
+The flight-topology regression had a second independent cause in the stock ArduCopter backend: `recvRotorControl()` ran on Unreal's game thread and retried a 100 ms blocking UDP receive until it obtained a complete actuator packet. A delayed or absent SITL datagram could therefore cap rendering near 10 FPS, stop asynchronous GPU readback, and deadlock the sensor/control exchange. Fork commit `5829c0ab` now performs a zero-wait drain, applies the newest complete packet, and retains the previous PWM when no packet is ready. Evidence `2026-08-25_121753_test_4f11822d` passed ARM, a 5.71 m takeoff, all square waypoints, LAND and DISARM. The immediately following live camera bundles measured 26.77 FPS at 640x480 and 24.03 FPS at 1280x720 with zero duplicate timestamps.
 
 The stock Cosys/AirSim request path is synchronous. `RenderRequest.cpp` schedules capture on Unreal's game thread, waits for the render command, calls `ReadSurfaceData` to copy the GPU render target into CPU memory, repacks pixels into an RGB vector and optionally compresses PNG on the CPU. `UnrealImageCapture.cpp` waits for that operation before returning the RPC response. With only one request in flight, frame rate is consequently bounded by end-to-end request latency.
 

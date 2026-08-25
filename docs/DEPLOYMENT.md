@@ -13,7 +13,7 @@ Install these exact product lines:
 - MSVC **14.44.35211 or newer** within the 14.44 toolset family. UE 5.8.1 explicitly bans 14.44.0–14.44.35210. The Visual Studio component is `Microsoft.VisualStudio.Component.VC.14.44.17.14.x86.x64`.
 - Windows SDK **10.0.22621.0**, component `Microsoft.VisualStudio.Component.Windows11SDK.22621`.
 - CMake 3.10 or newer, Git for Windows, Git LFS, and a current NVIDIA driver.
-- WSL2 distribution named `Ubuntu`, Ubuntu 24.04 LTS.
+- WSL2 enabled. `setup` imports the pinned Ubuntu 24.04.4 image as the isolated distribution `INDRA-COSYS-SIM`; do not reuse or modify the `Ubuntu` distribution owned by SIM2.
 
 Do not install UE 5.8.0 as a workaround. Cosys-AirSim release 3.4.1 targets the UE 5.8 line and this repository qualifies the available 5.8.1 patch release. Do not disable UnrealBuildTool's compiler safety checks.
 
@@ -75,11 +75,11 @@ Their expected commits are recorded in `tests/test-registry.json`. Until `dev.ps
 
 The expected source identities are enforced by `components.lock.json`:
 
-- `third_party/Cosys-AirSim` at `eb4d858a1f9baf1e3c3346aba4e5cae3fd0c11a8`, fork branch `indra-ue5.8`, based on release `5.8-v3.4.1`.
+- `third_party/Cosys-AirSim` at `5829c0ab18a8800399b43ecfeb921e627b48a625`, fork branch `indra-ue5.8`, based on release `5.8-v3.4.1`.
 - `third_party/ardupilot` at `ebceaa75aa175c6b6b52f69a8da8337e2919d62b`.
 - `third_party/VINS-NEO` at `0c09aecfebbe7b6bcdd55a3697aef6ba76ececc1`, branch `indra-sim2-compat`.
 - `third_party/iMAVROS` at `2bbd27b1a7b40bbf000d664b058f09b5db9dd518`.
-- `third_party/vio_stack` at `f93c2e6c7501ee95ed92e5f66f43096d4f96566b`, branch `indra-sim2-compat`.
+- `third_party/vio_stack` at `eb2cc542a0457759b208c27d324556c80cf6a1b6`, branch `indra-sim2-compat`; nested iHUB is `12b249a8d1bb711639997d6b354794a76958177f`.
 
 The vio_stack lock also verifies its exact nested iHUB, iHUB-STM, iCAM and iIMU revisions. Compatibility branches publish the previously local SIM2 commits without changing any component's `main` branch.
 
@@ -96,18 +96,19 @@ Do not continue while `doctor` reports a failure. A Mission Planner warning befo
 
 `setup` performs these reproducible actions:
 
+- downloads the official pinned Ubuntu 24.04.4 WSL image, verifies its SHA-256, imports `INDRA-COSYS-SIM` beside the repository under `F:\JANUS\WSL` (or the matching parent drive), and creates its non-root `indra` user;
 - restores every nested submodule and rechecks the pinned commits;
-- enforces an LF checkout inside `third_party/ardupilot`, independent of the user's global Git `core.autocrlf` setting;
+- enforces LF entrypoints inside `third_party/ardupilot` and nested iHUB, independent of the user's global Git `core.autocrlf` setting;
 - downloads Mission Planner 1.3.83 portable and verifies SHA-256 before extraction;
-- validates or installs the ArduPilot Ubuntu toolchain and `~/venv-ardupilot` Python environment;
+- validates or installs the headless ArduPilot Ubuntu toolchain and `~/venv-ardupilot` Python environment (MAVProxy/wxPython GUI packages are intentionally omitted because Mission Planner is the optional Windows observer);
 - installs the `rpc-msgpack` client used by the reproducible Cosys camera benchmark;
-- validates the existing SIM2 `/opt/iros2j` runtime or installs the official ROS 2 Jazzy base/message packages under `/opt/ros/jazzy` on Ubuntu 24.04;
-- prepares `colcon`, `rosdep`, Eigen, Ceres, OpenCV and serial dependencies for the pinned source-built VINS overlay;
+- installs the pinned official ROS apt-source bootstrap and stock ROS 2 Jazzy base/message packages under `/opt/ros/jazzy` inside `INDRA-COSYS-SIM`;
+- prepares `colcon`, `rosdep`, Eigen, Ceres, OpenCV, serial dependencies and the EGM96-5 GeographicLib geoid required by MAVROS for the pinned source-built VINS overlay;
 - creates two narrow rules required by current WSL networking: Windows inbound UDP 9022 for UnrealEditor, and Hyper-V/WSL inbound UDP 9023 for the WSL creator. No port range is opened.
 
 It also initialises the selected environment submodule recursively. `blocks` is built into the parent and requires no private checkout. Environment commits are pinned in `environments.lock.json`.
 
-Ubuntu can ask for its `sudo` password during first-time package installation. Windows can ask for UAC consent for the firewall rules. The Windows rule applies to the exact UnrealEditor executable and UDP 9022; the Hyper-V rule applies only to WSL, UDP 9023, and the local subnet. These are expected security boundaries, not reasons to broaden permissions.
+The isolated `indra` development user has passwordless sudo only inside `INDRA-COSYS-SIM`, allowing an agent to complete a clean deployment without modifying the old SIM2 distribution. Windows can ask for UAC consent for the firewall rules. The Windows rule applies to the exact UnrealEditor executable and UDP 9022; the Hyper-V rule applies only to WSL, UDP 9023, and the local subnet. These are expected security boundaries, not reasons to broaden permissions.
 
 ## 4. Build all four layers
 
@@ -123,7 +124,7 @@ The build order is:
 2. Generated AirSim plugin staged into `unreal\IndraCosysDemo\Plugins\AirSim` (ignored by Git).
 3. `IndraCosysDemoEditor` for UE 5.8.1, Development/Win64, Windows SDK 10.0.22621.0, explicitly enabling the selected environment plugin so a clean clone cannot depend on a stale DLL.
 4. ArduCopter SITL in Ubuntu 24.04.
-5. Pinned iMAVROS, VINS-NEO, iHUB, VINS initializer and vision bridge source overlay under `.runtime/vins-overlay`.
+5. Pinned iMAVROS, VINS-NEO, iHUB, VINS initializer and vision bridge source overlay under `.runtime/vins-overlay-jazzy`.
 
 Generated plugin files, `Binaries`, `Intermediate`, `Saved`, Derived Data and `.runtime` must remain untracked. On HDD-based workspaces, place disposable Unreal `Intermediate` and Derived Data caches on SSD/NVMe when possible; a single AirSim unity unit took about 22 minutes on the reference SATA disk.
 
@@ -187,7 +188,7 @@ After the ordinary flight PASS, verify the optional SIM2-compatible sensor graph
 .\dev.ps1 test -Environment blocks -SkipBuild -WithRos2
 ```
 
-The first command requires all six topics, exact frame IDs, strictly increasing simulation timestamps, valid 640x480 RGB8 payload/calibration and synchronized image metadata. Both IMU feeds must remain within 190-210 Hz in wall and simulation time, camera-nearest-IMU p95 must be at most 5 ms, and the bridge must report zero history overflow/error. Clock/odom require at least 20 wall Hz and image/camera-info at least 10 wall Hz. The second command repeats the full flight with the bridge active and applies the same transport-integrity checks. Neither command launches Mission Planner. `setup` uses an existing `/opt/iros2j` when present; a clean Ubuntu 24.04 machine receives the official `/opt/ros/jazzy` packages and may request its sudo password.
+The first command requires all six topics, exact frame IDs, strictly increasing simulation timestamps, valid 640x480 RGB8 payload/calibration and synchronized image metadata. Both IMU feeds must remain within 190-210 Hz in wall and simulation time, camera-nearest-IMU p95 must be at most 5 ms, and the bridge must report zero history overflow/error. Clock/odom require at least 20 wall Hz and image/camera-info at least 10 wall Hz. The second command repeats the full flight with the bridge active and applies the same transport-integrity checks. Neither command launches Mission Planner. The isolated distribution always prefers stock `/opt/ros/jazzy`; legacy callers may still pass `-Distro Ubuntu`, which is accepted only as an argument alias and resolves to the pinned `INDRA-COSYS-SIM` runtime.
 
 `vins-test` is the first VINS acceptance gate. It requires the complete iHUB 0-90 degree sweep, moving-frame CameraImu evidence, at least 15 tracked features, VINS initializer READY, fresh ExternalNav READY and `/mavros/odometry/out`. It never launches Mission Planner and stores its verdict under the run's `vins/` evidence directory.
 
@@ -213,7 +214,7 @@ Run the two supported resolutions without Mission Planner:
 .\dev.ps1 camera-test
 ```
 
-The live profile is Scene image type, raw RGB, `ForceUpdate=false`, Lumen GI/reflections disabled for the sensor capture, a 640x360 diagnostic viewport, the fork's 30 Hz asynchronous GPU-readback producer and a 25 Hz ROS publish cap. Acceptance is at least 20 unique frames/s at 640x480 and 10 unique frames/s at 1280x720. Every run analyzes early/late raw frames and rejects black or uniform content; `-SaveSamples` additionally preserves those frames as PPM artifacts. The viewport size does not change sensor output resolution. Do not use PNG compression in a control or VINS path; encode or record frames asynchronously downstream. See [CAMERA_PERFORMANCE.md](CAMERA_PERFORMANCE.md) for measured results and implementation details.
+The live profile is Scene image type, raw RGB, `ForceUpdate=false`, Lumen GI/reflections disabled for the sensor capture, a 640x360 diagnostic viewport, the fork's 30 Hz asynchronous GPU-readback producer and a 25 Hz ROS publish cap. Acceptance is at least 20 unique frames/s at 640x480 and 10 unique frames/s at 1280x720. The current live-SITL Blocks evidence measured 26.77 and 24.03 FPS respectively, with 18.5 FPS in the worst 1280x720 two-second window and zero duplicate timestamps. Every run analyzes early/late raw frames and rejects black or uniform content; `-SaveSamples` additionally preserves those frames as PPM artifacts. The viewport size does not change sensor output resolution. Do not use PNG compression in a control or VINS path; the measured 1280x720 PNG rate was only 6.89 FPS, so encoding and recording belong asynchronously downstream. See [CAMERA_PERFORMANCE.md](CAMERA_PERFORMANCE.md) for measured results and implementation details.
 
 Do not add `-RenderOffscreen` to the normal acceptance run. It reduced camera throughput on the qualified workstation and can also reduce simulation timing margin. It remains an explicit `-Headless` diagnostic option only.
 
@@ -239,3 +240,19 @@ Then return to the parent repository, update the Cosys commit in `components.loc
 4. Confirm ports are free and WSL IP discovery still matches the active distribution.
 5. Confirm both submodule commits before changing source.
 6. Only then classify an error as Cosys/UE 5.8.1 source incompatibility and patch the fork branch.
+
+## 10. Autonomous-agent deployment directive
+
+An agent deploying this repository on another workstation must treat this document, `components.lock.json`, `environments.lock.json` and `tests/test-registry.json` as the machine-readable contract. It may install missing in-scope build dependencies and regenerate ignored build products, but must not convert old Unreal projects in place, copy Microsoft AirSim binaries, modify the old SIM2 WSL distribution, change pinned commits silently, or claim a capability without its evidence gate.
+
+Required unattended order:
+
+1. Clone outside OneDrive and run `dev.ps1 doctor`; record every blocking prerequisite.
+2. Install or finish UE 5.8.1, VS 2022 17.14, the supported MSVC 14.44 patch and Windows SDK 22621, then repeat `doctor`.
+3. Run `dev.ps1 setup`. A fresh machine must end with default user `indra` in `INDRA-COSYS-SIM`, `/opt/ros/jazzy`, `~/venv-ardupilot`, exact component commits and no changes to the distribution named `Ubuntu`.
+4. Run `dev.ps1 build`, then the smallest acceptance sequence: `test`, `ros-test`, `vins-test`. Automated commands must not launch Mission Planner.
+5. Initialise qualification tests and private environments only when their prior capability gates pass. Preview environments require explicit `-Preview` and cannot provide release evidence.
+6. On failure, preserve the run bundle and logs, fix the smallest owning layer, rebuild, and rerun the failed gate plus all earlier gates that the change could affect.
+7. Push a component change to its designated compatibility branch first, update its parent lock and submodule gitlink together, and push the parent last. Never modify upstream-synchronised `main` branches.
+
+The agent stops only for missing credentials or licences, an unavailable required installer, a Windows elevation prompt it cannot satisfy, or a hardware/driver failure. It must report the exact failed gate and artifact path instead of replacing the gate with a weaker test.

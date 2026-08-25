@@ -85,8 +85,8 @@ try {
     }
     if (-not $ready) { throw "Cosys RPC was not ready within 10 minutes; see $ueLog" }
 
-    # The ArduCopter backend waits for its UDP peer on the game thread. Start SITL
-    # before requesting images so the benchmark measures a live flight topology.
+    # Start SITL before requesting images so the benchmark measures the live
+    # flight topology and catches any regression to game-thread UDP blocking.
     $ardupilot = Convert-ToWslPath (Join-Path $script:RepoRoot 'third_party\ardupilot')
     $runWsl = Convert-ToWslPath $runDirectory
     $location = [string]::Format(

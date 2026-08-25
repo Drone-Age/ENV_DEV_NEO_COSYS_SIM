@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)]
     [ValidateSet('Status', 'EnableMirrored', 'Restore')]
     [string]$Action,
-    [string]$Distro = 'Ubuntu'
+    [string]$Distro = 'INDRA-COSYS-SIM'
 )
 
 Set-StrictMode -Version Latest

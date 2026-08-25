@@ -19,6 +19,7 @@ def generate_launch_description():
     fcu_url = LaunchConfiguration("fcu_url")
     enable_ihub = LaunchConfiguration("enable_ihub")
     enable_external_nav = LaunchConfiguration("enable_external_nav")
+    enable_wind = LaunchConfiguration("enable_wind")
     client_device = LaunchConfiguration("ihub_client_device")
     server_device = LaunchConfiguration("ihub_server_device")
 
@@ -26,6 +27,7 @@ def generate_launch_description():
         DeclareLaunchArgument("fcu_url", default_value="tcp://127.0.0.1:5780"),
         DeclareLaunchArgument("enable_ihub", default_value="true"),
         DeclareLaunchArgument("enable_external_nav", default_value="true"),
+        DeclareLaunchArgument("enable_wind", default_value="false"),
         DeclareLaunchArgument("ihub_client_device", default_value="/tmp/indra-cosys-ihub/client.tty"),
         DeclareLaunchArgument("ihub_server_device", default_value="/tmp/indra-cosys-ihub/server.tty"),
         DeclareLaunchArgument("ihub_flash_path", default_value="/tmp/indra-cosys-ihub/flash.bin"),
@@ -65,6 +67,20 @@ def generate_launch_description():
                 "use_sim_time": True,
                 "input_topic": "/sim/body/imu",
                 "output_topic": "/mavros/imu/data_raw",
+            }],
+        ),
+        Node(
+            package="vins_sim_bringup",
+            executable="wind_driver",
+            name="wind_driver",
+            output="screen",
+            condition=IfCondition(enable_wind),
+            parameters=[{
+                "use_sim_time": True,
+                "cosys_host": LaunchConfiguration("cosys_host"),
+                "cosys_port": ParameterValue(
+                    LaunchConfiguration("cosys_port"), value_type=int
+                ),
             }],
         ),
 

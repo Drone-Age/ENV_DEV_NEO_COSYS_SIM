@@ -36,6 +36,19 @@ function Test-PortFree([int]$Port) {
     return -not ($tcp -or $udp)
 }
 
+function Set-LfLineEnding([string[]]$Paths) {
+    $utf8NoBom = [Text.UTF8Encoding]::new($false)
+    foreach ($path in $Paths) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Required WSL entrypoint is missing: $path"
+        }
+        $text = [IO.File]::ReadAllText($path)
+        if ($text.Contains("`r")) {
+            [IO.File]::WriteAllText($path, $text.Replace("`r`n", "`n").Replace("`r", "`n"), $utf8NoBom)
+        }
+    }
+}
+
 function Invoke-EnvironmentList {
     $rows = foreach ($entry in $script:EnvironmentLock.environments.psobject.Properties) {
         $environmentId = $entry.Name
@@ -236,7 +249,7 @@ function Invoke-Doctor {
     if ($cmake) { Write-Pass 'CMake' ((& cmake.exe --version | Select-Object -First 1)) } else { Write-Fail 'CMake' 'cmake.exe is not on PATH'; $failures++ }
     $wsl = Invoke-Wsl -Command 'lsb_release -ds' -AllowFailure
     if ($wsl.ExitCode -eq 0 -and (($wsl.Output -join ' ') -match 'Ubuntu 24\.04')) { Write-Pass 'WSL2 Ubuntu' ($wsl.Output -join ' ') } else { Write-Fail 'WSL2 Ubuntu' ($wsl.Output -join ' '); $failures++ }
-    $ros = Invoke-Wsl -Command "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; elif [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else exit 66; fi; test -x ~/venv-ardupilot/bin/python3 && ~/venv-ardupilot/bin/python3 -c 'import msgpackrpc, rclpy; from sensor_msgs.msg import Image, Imu; from nav_msgs.msg import Odometry; from rosgraph_msgs.msg import Clock'" -AllowFailure
+    $ros = Invoke-Wsl -Command "if [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; elif [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; else exit 66; fi; test -x ~/venv-ardupilot/bin/python3 && ~/venv-ardupilot/bin/python3 -c 'import msgpackrpc, rclpy; from sensor_msgs.msg import Image, Imu; from nav_msgs.msg import Odometry; from rosgraph_msgs.msg import Clock'" -AllowFailure
     if ($ros.ExitCode -eq 0) { Write-Pass 'ROS 2 Jazzy' 'ArduPilot venv sees RPC and SIM2 ROS message contracts' } else { Write-Fail 'ROS 2 Jazzy' 'combined ArduPilot venv + /opt/iros2j or /opt/ros/jazzy environment is required'; $failures++ }
 
     $gpu = Get-CimInstance Win32_VideoController | Where-Object Name -Match 'NVIDIA' | Select-Object -First 1
@@ -276,6 +289,10 @@ function Invoke-Doctor {
 }
 
 function Invoke-Setup {
+    Write-Step "Preparing isolated WSL distribution '$($script:Lock.platform.wsl_distribution)'"
+    & (Join-Path $PSScriptRoot 'setup-wsl-distro.ps1') -RepoRoot $script:RepoRoot -DistroName $script:Lock.platform.wsl_distribution
+    if ($LASTEXITCODE -ne 0) { throw 'Isolated Ubuntu 24.04 WSL setup failed.' }
+
     Write-Step 'Initialising pinned submodules'
     $componentPaths = @($script:Lock.submodules.psobject.Properties | ForEach-Object { $_.Name })
     & git submodule update --init -- $componentPaths
@@ -299,6 +316,21 @@ function Invoke-Setup {
         }
         & git -C $componentPath submodule update --init --recursive
         if ($LASTEXITCODE -ne 0) { throw "Recursive submodule initialisation failed for $($entry.Name)." }
+        if ($entry.Name -eq 'third_party/vio_stack') {
+            $ihubPath = Join-Path $componentPath 'src\actuators\iHUB'
+            & git -C $ihubPath config core.autocrlf false
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to enforce LF checkout for iHUB.' }
+            Set-LfLineEnding -Paths @(
+                (Join-Path $ihubPath 'scripts\ihub-client'),
+                (Join-Path $ihubPath 'scripts\ihub-server-sim'),
+                (Join-Path $ihubPath 'scripts\ihub-uart-sim')
+            )
+            # The blobs are already LF in Git. Refreshing the index records the
+            # mechanically corrected NTFS worktree without creating a source diff.
+            & git -C $ihubPath add scripts/ihub-client scripts/ihub-server-sim scripts/ihub-uart-sim
+            & git -C $ihubPath diff --cached --quiet
+            if ($LASTEXITCODE -ne 0) { throw 'iHUB entrypoint normalisation changed pinned source content.' }
+        }
         $actual = (& git -C $componentPath rev-parse HEAD).Trim()
         if ($actual -ne $entry.Value.commit) { throw "$($entry.Name) is not at its pinned commit." }
         if ($entry.Value.PSObject.Properties.Name -contains 'nested_submodules') {
@@ -323,8 +355,7 @@ function Invoke-Setup {
     $setupLog = Convert-ToWslPath (Join-Path $script:RuntimeRoot 'ardupilot-prerequisites.log')
     $ready = Invoke-Wsl -Command "test -x ~/venv-ardupilot/bin/python && command -v g++ >/dev/null && command -v make >/dev/null && command -v ccache >/dev/null && ~/venv-ardupilot/bin/python -c 'import pymavlink, pexpect, lxml, numpy'" -AllowFailure
     if ($ready.ExitCode -ne 0) {
-        Write-Warn 'WSL prerequisites' 'sudo may request the Ubuntu password in this terminal'
-        & wsl.exe -d $script:Lock.platform.wsl_distribution -- bash -lc "cd '$ardupilot' && export DO_PYTHON_VENV_ENV=0 && Tools/environment_install/install-prereqs-ubuntu.sh -y 2>&1 | tee '$setupLog'"
+        & wsl.exe -d $script:Lock.platform.wsl_distribution -- bash -lc "cd '$ardupilot' && export DO_PYTHON_VENV_ENV=0 DO_AP_STM_ENV=0 SKIP_AP_GRAPHIC_ENV=1 && Tools/environment_install/install-prereqs-ubuntu.sh -y 2>&1 | tee '$setupLog'"
         if ($LASTEXITCODE -ne 0) { throw "ArduPilot prerequisite setup failed; see .runtime\ardupilot-prerequisites.log" }
     }
     $rpcReady = Invoke-Wsl -Command "~/venv-ardupilot/bin/python -c 'import msgpackrpc'" -AllowFailure
@@ -335,11 +366,10 @@ function Invoke-Setup {
     Write-Pass 'Cosys Python client' 'rpc-msgpack available for camera qualification'
     Write-Pass 'ArduPilot prerequisites' 'Ubuntu toolchain and ~/venv-ardupilot ready'
 
-    $rosReady = Invoke-Wsl -Command "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; elif [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else exit 66; fi; ~/venv-ardupilot/bin/python3 -c 'import msgpackrpc, rclpy; from sensor_msgs.msg import Image, Imu; from nav_msgs.msg import Odometry; from rosgraph_msgs.msg import Clock'" -AllowFailure
+    $rosReady = Invoke-Wsl -Command "if [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; elif [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; else exit 66; fi; ~/venv-ardupilot/bin/python3 -c 'import msgpackrpc, rclpy; from sensor_msgs.msg import Image, Imu; from nav_msgs.msg import Odometry; from rosgraph_msgs.msg import Clock'" -AllowFailure
     if ($rosReady.ExitCode -ne 0) {
-        Write-Warn 'ROS 2 Jazzy' 'sudo may request the Ubuntu password in this terminal'
         $rosSetup = Convert-ToWslPath (Join-Path $PSScriptRoot 'wsl\setup_ros2_jazzy.sh')
-        & wsl.exe -d $script:Lock.platform.wsl_distribution -- bash $rosSetup
+        & wsl.exe -d $script:Lock.platform.wsl_distribution -u root -- bash $rosSetup
         if ($LASTEXITCODE -ne 0) { throw 'ROS 2 Jazzy setup failed.' }
     }
     Write-Pass 'ROS 2 Jazzy' 'SIM2-compatible bridge runtime available'
@@ -347,7 +377,7 @@ function Invoke-Setup {
     Write-Step 'Preparing pinned VINS/iMAVROS/vio_stack overlay dependencies'
     $repoWsl = Convert-ToWslPath $script:RepoRoot
     $vinsSetup = Convert-ToWslPath (Join-Path $PSScriptRoot 'wsl\setup_vins_overlay.sh')
-    & wsl.exe -d $script:Lock.platform.wsl_distribution -- bash $vinsSetup $repoWsl
+    & wsl.exe -d $script:Lock.platform.wsl_distribution -u root -- bash $vinsSetup $repoWsl
     if ($LASTEXITCODE -ne 0) { throw 'VINS overlay prerequisite setup failed.' }
     Write-Pass 'VINS overlay prerequisites' 'colcon, rosdep and native libraries ready'
 
@@ -470,7 +500,7 @@ function Start-VinsStack([string]$RunDirectory, [object]$Settings) {
 
 function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$StartRos2, [switch]$StartVins) {
     if ($StartVins -and -not $StartRos2) { throw 'VINS requires the Cosys ROS 2 bridge.' }
-    if ($Distro -ne $script:Lock.platform.wsl_distribution) { throw "This pinned bundle requires WSL distribution '$($script:Lock.platform.wsl_distribution)', received '$Distro'." }
+    if ($Distro -notin @($script:Lock.platform.wsl_distribution, 'Ubuntu')) { throw "This pinned bundle requires WSL distribution '$($script:Lock.platform.wsl_distribution)'; legacy test launchers may pass 'Ubuntu' as an alias." }
     $environmentManifest = Get-RuntimeEnvironmentManifest -EnvironmentId $Environment -Preview:$Preview
     if ($environmentManifest.readiness -eq 'preview') {
         Write-Warn 'Preview environment' 'runtime evidence is diagnostic and cannot promote the environment to ready by itself'
@@ -480,7 +510,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
         $plugin = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Plugins\AirSim\AirSim.uplugin'
         $editorDll = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Binaries\Win64\UnrealEditor-IndraCosysDemo.dll'
         $sitl = Join-Path $script:RepoRoot 'third_party\ardupilot\build\sitl\bin\arducopter'
-        $vinsOverlay = Join-Path $script:RuntimeRoot 'vins-overlay\install\setup.bash'
+        $vinsOverlay = Join-Path $script:RuntimeRoot 'vins-overlay-jazzy\install\setup.bash'
         $vinsBuildMissing = $StartVins -and -not (Test-Path -LiteralPath $vinsOverlay)
         if (-not (Test-Path -LiteralPath $plugin) -or -not (Test-Path -LiteralPath $editorDll) -or -not (Test-Path -LiteralPath $sitl) -or $vinsBuildMissing) { Invoke-Build }
     }
@@ -579,7 +609,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
         environment = [ordered]@{ id = $environmentManifest.id; version = $environmentManifest.version; readiness = $environmentManifest.readiness; preview_authorized = [bool]$Preview; map = $environmentManifest.map_path; render_profile = $RenderProfile }
         endpoints = $script:Config.ports; network = $settings.Network
         ros2 = [ordered]@{ enabled = [bool]$StartRos2; domain_id = [int]$script:Config.future_ros_domain_id }
-        vins = [ordered]@{ enabled = [bool]$StartVins; overlay = '.runtime/vins-overlay/install/setup.bash' }
+        vins = [ordered]@{ enabled = [bool]$StartVins; overlay = '.runtime/vins-overlay-jazzy/install/setup.bash' }
     }
     Write-JsonFile $metadata (Join-Path $runDirectory 'summary.json')
     return $runDirectory
@@ -661,7 +691,7 @@ function Invoke-RosTopicTest {
         $probe = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\ros_topic_probe.py')
         $output = "$runWsl/ros2/topic-probe.json"
         $domainId = [int]$script:Config.future_ros_domain_id
-        $command = "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; else source /opt/ros/jazzy/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$probe' --duration 12 --profile '$profile' --output '$output'"
+        $command = "if [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else source /opt/iros2j/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$probe' --duration 12 --profile '$profile' --output '$output'"
         Write-Step 'Probing SIM2-compatible ROS 2 topics, rates, frames and timestamps'
         $result = Invoke-Wsl -Command $command -AllowFailure
         $result.Output | Tee-Object -FilePath (Join-Path $runDirectory 'ros2\topic-probe.log') | ForEach-Object { Write-Host $_ }
@@ -706,7 +736,7 @@ function Invoke-VinsRuntimeTest {
         $probe = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\vins_runtime_probe.py')
         $output = "$runWsl/vins/runtime-probe.json"
         $domainId = [int]$script:Config.future_ros_domain_id
-        $command = "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; else source /opt/ros/jazzy/setup.bash; fi; source '$repoWsl/.runtime/vins-overlay/install/setup.bash'; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$probe' --timeout 300 --output '$output'"
+        $command = "if [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else source /opt/iros2j/setup.bash; fi; source '$repoWsl/.runtime/vins-overlay-jazzy/install/setup.bash'; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$probe' --timeout 300 --output '$output'"
         Write-Step 'Waiting for iHUB sweep, moving CameraImu, VINS TRACKING and ExternalNav READY'
         $result = Invoke-Wsl -Command $command -AllowFailure
         $result.Output | Tee-Object -FilePath (Join-Path $runDirectory 'vins\runtime-probe.log') | ForEach-Object { Write-Host $_ }

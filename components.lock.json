@@ -7,7 +7,7 @@
     "msvc": "14.44",
     "msvc_minimum": "14.44.35211",
     "windows_sdk": "10.0.22621.0",
-    "wsl_distribution": "Ubuntu",
+    "wsl_distribution": "INDRA-COSYS-SIM",
     "ubuntu": "24.04",
     "future_ros_domain_id": 44
   },
@@ -15,7 +15,7 @@
     "third_party/Cosys-AirSim": {
       "url": "https://github.com/Drone-Age/Cosys-AirSim.git",
       "branch": "indra-ue5.8",
-      "commit": "eb4d858a1f9baf1e3c3346aba4e5cae3fd0c11a8",
+      "commit": "5829c0ab18a8800399b43ecfeb921e627b48a625",
       "release": "5.8-v3.4.1"
     },
     "third_party/ardupilot": {
@@ -37,10 +37,10 @@
     "third_party/vio_stack": {
       "url": "https://github.com/Drone-Age/vio_stack.git",
       "branch": "indra-sim2-compat",
-      "commit": "f93c2e6c7501ee95ed92e5f66f43096d4f96566b",
+      "commit": "eb2cc542a0457759b208c27d324556c80cf6a1b6",
       "role": "SIM2 iCAM/iIMU/iHUB, VINS initializer and vision bridge",
       "nested_submodules": {
-        "src/actuators/iHUB": "38a2351cb9b3e1d9fcbdeb0f5e2b6054995c86ea",
+        "src/actuators/iHUB": "12b249a8d1bb711639997d6b354794a76958177f",
         "src/actuators/iHUB/firmware/iHUB-STM": "c2186b7e4d0caff9defbbaa18a9d19b9fed01a75",
         "src/sensors/iCAM": "d2faa3cdd2d1c82209dee6480a097db47f4a1477",
         "src/sensors/iIMU": "872d6fa47ca5ff86a5b389c3ff8d1a790a98f815"

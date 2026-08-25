@@ -251,13 +251,21 @@ class CosysRosBridge(Node):
         client = self.client()
         vehicle = self.profile["vehicle"]
         truth = self.profile["ground_truth"]
+        clock_imu_name = self.profile["body_imu"]["name"]
         period = 1.0 / float(truth["published_hz"])
         previous_orientation = None
         while not self.stop_event.is_set():
             started = time.monotonic()
             kinematics = client.simGetGroundTruthKinematics(vehicle_name=vehicle)
-            state = client.getMultirotorState(vehicle_name=vehicle)
-            stamp_ns = int(state.timestamp)
+            # ArduCopterApi's generic multirotor state accessors are stubs and
+            # log three "Not Implemented" lines per request. At 50 Hz that
+            # disk I/O can stall Unreal's game thread and GPU capture. The
+            # authoritative body IMU carries the same simulation clock.
+            stamp_ns = int(
+                client.getImuData(
+                    imu_name=clock_imu_name, vehicle_name=vehicle
+                ).time_stamp
+            )
             if self.stats.accepted("/sim/ground_truth/odom", stamp_ns):
                 stamp = ros_time(stamp_ns)
                 clock = Clock()

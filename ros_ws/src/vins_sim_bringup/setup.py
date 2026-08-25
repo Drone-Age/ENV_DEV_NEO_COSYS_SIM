@@ -23,6 +23,7 @@ setup(
     entry_points={
         "console_scripts": [
             "imu_qos_adapter = vins_sim_bringup.imu_qos_adapter:main",
+            "wind_driver = vins_sim_bringup.wind_driver:main",
         ]
     },
 )

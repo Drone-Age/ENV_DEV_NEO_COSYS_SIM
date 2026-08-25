@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -f /opt/iros2j/setup.bash || -f /opt/ros/jazzy/setup.bash ]]; then
+if [[ -f /opt/ros/jazzy/setup.bash ]]; then
     exit 0
 fi
 
@@ -12,18 +12,19 @@ if [[ ${ID:-} != ubuntu || $codename != noble ]]; then
     exit 65
 fi
 
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl software-properties-common
-sudo add-apt-repository -y universe
+apt-get update
+apt-get install -y ca-certificates curl software-properties-common
+add-apt-repository -y universe
 
-ros_source_version=$(curl -fsSL https://api.github.com/repos/ros-infrastructure/ros-apt-source/releases/latest \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')
+ros_source_version=1.2.0
+ros_source_sha256=0804d9b13db770eb87019be414cd78378835228ad5fa801fc88758596dd8f7e5
 source_deb="/tmp/ros2-apt-source_${ros_source_version}.${codename}_all.deb"
 curl -fL -o "$source_deb" \
     "https://github.com/ros-infrastructure/ros-apt-source/releases/download/${ros_source_version}/ros2-apt-source_${ros_source_version}.${codename}_all.deb"
-sudo dpkg -i "$source_deb"
-sudo apt-get update
-sudo apt-get install -y \
+printf '%s  %s\n' "$ros_source_sha256" "$source_deb" | sha256sum --check --strict
+dpkg -i "$source_deb"
+apt-get update
+apt-get install -y \
     ros-jazzy-ros-base \
     ros-jazzy-nav-msgs \
     ros-jazzy-rosgraph-msgs \

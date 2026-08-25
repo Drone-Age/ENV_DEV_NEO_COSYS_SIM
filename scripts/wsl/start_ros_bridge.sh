@@ -15,10 +15,10 @@ domain_id=$6
 ros_dir="$run_dir/ros2"
 mkdir -p "$ros_dir"
 
-if [[ -f /opt/iros2j/setup.bash ]]; then
-    source /opt/iros2j/setup.bash
-elif [[ -f /opt/ros/jazzy/setup.bash ]]; then
+if [[ -f /opt/ros/jazzy/setup.bash ]]; then
     source /opt/ros/jazzy/setup.bash
+elif [[ -f /opt/iros2j/setup.bash ]]; then
+    source /opt/iros2j/setup.bash
 else
     echo "ROS 2 Jazzy setup was not found" >&2
     exit 66

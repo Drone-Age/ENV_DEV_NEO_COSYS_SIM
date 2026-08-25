@@ -8,15 +8,15 @@ fi
 
 repo_root=$1
 runtime_root=$2
-overlay_root="$runtime_root/vins-overlay"
+overlay_root="$runtime_root/vins-overlay-jazzy"
 
-if [[ -f /opt/iros2j/setup.bash ]]; then
-    set +u
-    source /opt/iros2j/setup.bash
-    set -u
-elif [[ -f /opt/ros/jazzy/setup.bash ]]; then
+if [[ -f /opt/ros/jazzy/setup.bash ]]; then
     set +u
     source /opt/ros/jazzy/setup.bash
+    set -u
+elif [[ -f /opt/iros2j/setup.bash ]]; then
+    set +u
+    source /opt/iros2j/setup.bash
     set -u
 else
     echo "ROS 2 Jazzy setup was not found" >&2
@@ -25,6 +25,7 @@ fi
 
 command -v colcon >/dev/null
 mkdir -p "$overlay_root/build" "$overlay_root/install" "$overlay_root/log"
+export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
 
 base_paths=(
     "$repo_root/third_party/iMAVROS"

@@ -185,9 +185,10 @@ class VinsRuntimeProbe(Node):
 
 def write_result(path: Path, result: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
-    temporary.replace(path)
+    # The evidence bundle is on a Windows DrvFS mount. Windows indexers can
+    # briefly hold the destination open, which makes POSIX atomic replace fail
+    # with EACCES even though a normal write remains valid.
+    path.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def main() -> int:
