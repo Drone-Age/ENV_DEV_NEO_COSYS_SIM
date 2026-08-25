@@ -31,7 +31,7 @@ The ROS 2 Jazzy compatibility layer preserves `/clock`, `/sim/ground_truth/odom`
 
 ## Capability milestones
 
-Current capabilities report the fixed-rate asynchronous camera and the initial ROS 2 Jazzy topic bridge as true. The bridge passed topic/frame/timestamp/payload conformance and a complete Blocks flight with no Mission Planner. VINS, batched 200 Hz camera IMU and wind command/ack remain false until their own runtime acceptance gates pass; `ros2=true` must not be interpreted as VINS readiness.
+Current capabilities report the fixed-rate asynchronous camera, ROS 2 Jazzy bridge and batched high-rate camera IMU as true. Evidence `2026-08-25_075418_test_91c0c67e` passed 190-210 Hz in both wall and simulation time, camera-nearest-IMU p95 2.89 ms, monotonic original timestamps and zero overflow/error. The complete Blocks flight `2026-08-25_075544_test_8ec4b773` passed with the same transport and no Mission Planner. VINS and wind command/ack remain false until their runtime gates pass; `ros2=true` and `camera_imu_batched=true` must not be interpreted as VINS readiness.
 
 Before the 25 m climb smoke, the Cosys fork and wrapper must provide:
 

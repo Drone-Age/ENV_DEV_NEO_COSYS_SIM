@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "profile_id": "imx477-cs2006-h30-cosys-640x480-v1",
+  "profile_id": "imx477-cs2006-h30-cosys-640x480-v2",
   "ros_domain_id": 44,
   "vehicle": "Copter",
   "camera": {
@@ -17,12 +17,18 @@
   },
   "body_imu": {
     "name": "BodyImu",
-    "frame_id": "imu_link"
+    "frame_id": "imu_link",
+    "nominal_hz": 200.0,
+    "wall_budget_hz": 196.0,
+    "batch_poll_hz": 50.0
   },
   "camera_imu": {
     "name": "CameraImu",
     "frame_id": "camera_imu_link",
-    "mounting": "rigid-zero-gimbal-only-until-batched-api"
+    "nominal_hz": 200.0,
+    "wall_budget_hz": 196.0,
+    "batch_poll_hz": 50.0,
+    "mounting": "rigid-zero-gimbal"
   },
   "ground_truth": {
     "frame_id": "odom",

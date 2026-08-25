@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import math
 import pathlib
@@ -125,6 +126,24 @@ def monotonic(stamps: list[int]) -> bool:
     return len(stamps) > 1 and all(right > left for left, right in zip(stamps, stamps[1:]))
 
 
+def nearest_timestamp_p95_ms(reference: list[int], candidates: list[int]) -> float:
+    if not reference or not candidates:
+        return math.inf
+    ordered = sorted(candidates)
+    deltas = []
+    for stamp in reference:
+        index = bisect.bisect_left(ordered, stamp)
+        neighbors = []
+        if index < len(ordered):
+            neighbors.append(abs(ordered[index] - stamp))
+        if index > 0:
+            neighbors.append(abs(ordered[index - 1] - stamp))
+        deltas.append(min(neighbors))
+    deltas.sort()
+    rank = max(0, math.ceil(0.95 * len(deltas)) - 1)
+    return deltas[rank] / 1_000_000.0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--duration", type=float, default=10.0)
@@ -186,11 +205,17 @@ def main() -> int:
         for k, d, model in node.camera_models
     )
     image_info_overlap = len(set(node.stamps["image"]) & set(node.stamps["camera_info"]))
-    minimum_rates = {"clock": 20.0, "odom": 20.0, "body_imu": 50.0, "camera_imu": 50.0, "image": 10.0, "camera_info": 10.0}
+    minimum_rates = {"clock": 20.0, "odom": 20.0, "body_imu": 190.0, "camera_imu": 190.0, "image": 10.0, "camera_info": 10.0}
+    maximum_rates = {"body_imu": 210.0, "camera_imu": 210.0}
+    image_to_camera_imu_p95_ms = nearest_timestamp_p95_ms(node.stamps["image"], node.stamps["camera_imu"])
     checks = {
         "all_topics_present": all(node.stamps[name] for name in node.stamps),
         "strictly_monotonic_timestamps": all(monotonicity.values()),
         "minimum_initial_rates": all(wall_rates[name] >= minimum for name, minimum in minimum_rates.items()),
+        "imu_rates_at_most_210_hz": all(wall_rates[name] <= maximum for name, maximum in maximum_rates.items()),
+        "imu_simulation_rates_between_190_and_210_hz": all(
+            190.0 <= rates[name] <= 210.0 for name in maximum_rates),
+        "camera_nearest_imu_p95_at_most_5_ms": image_to_camera_imu_p95_ms <= 5.0,
         "image_worst_full_2s_at_least_10_hz": image_worst_2s_hz >= 10.0,
         "frame_contract": frame_contract,
         "image_contract": node.image_shapes == {expected_shape},
@@ -207,6 +232,7 @@ def main() -> int:
         "rates_hz": rates,
         "wall_rates_hz": wall_rates,
         "image_worst_full_2s_hz": image_worst_2s_hz,
+        "image_to_camera_imu_p95_ms": image_to_camera_imu_p95_ms,
         "monotonic": monotonicity,
         "frames": {name: sorted(values) for name, values in node.frames.items()},
         "image_shapes": [list(shape) for shape in sorted(node.image_shapes)],

@@ -29,6 +29,10 @@ The reference machine is Ryzen 5 8400F, RTX 5060 Ti 16 GB, UE 5.8.1 and Cosys Bl
 | ROS 2 Jazzy over WSL2 NAT, repeat | 640x480 | raw RGB | 18.16 wall / 15.0 worst 2 s | live-depth probe |
 | ROS 2 Jazzy over WSL2 NAT, best repeat | 640x480 | raw RGB | 21.20 wall / 19.0 worst 2 s | live-depth probe |
 | ROS 2 bridge during complete square flight | 640x480 | raw RGB | 23.31 wall | 2,852 frames |
+| Final 30 Hz producer, WSL2 NAT | 640x480 | raw RGB | 28.06 / 27.5 worst 2 s | 562 unique, 0 duplicates |
+| Final 30 Hz producer, WSL2 NAT | 1280x720 | raw RGB | 26.73 / 25.0 worst 2 s | 537 unique, 0 duplicates |
+| ROS 2 + batched IMU strict gate | 640x480 | raw RGB | 21.76 / 19.5 worst 2 s | IMU p95 2.89 ms |
+| ROS 2 + batched IMU full square flight | 640x480 | raw RGB | 24.35 wall | TAKEOFF/LAND/DISARM PASS |
 | On demand | 640x480 | raw RGB | 21.96-23.64 | 42.29-45.54 ms |
 | On demand, 1280x720 viewport | 1280x720 | raw RGB | 19.10-20.31 | 49.22-52.36 ms |
 | On demand, 640x360 viewport | 1280x720 | raw RGB | 20.25 | 49.37 ms |
@@ -48,7 +52,7 @@ The asynchronous rural runs used 411/411 unique frames at 640x480 and 410/410 at
 
 The old 15.33 FPS result is therefore a historical synchronous-path measurement, not the current ceiling. For 1280x720 the hard release floor is 10 unique FPS in every complete two-second window, while stable 20 Hz remains the engineering target. A whole-run average above 10 FPS is insufficient if short stalls violate that window gate.
 
-The stricter cadence repeat exposed an important transport distinction. After the monotonic-timestamp fix, the Windows-native client delivered 20.56 FPS, never fell below 19.5 FPS in a full two-second window and returned 411/411 distinct timestamps (`2026-08-25_020328_camera-sim2-rural-1280x720_12ab81cb`). The WSL2 NAT client delivered 15.00 FPS and fell to 8.5 FPS in its worst window. Removing the two named IMUs did not restore throughput (14.38 FPS), so the IMU update is not the cause. These results mean the renderer and fixed Cosys path meet the target, but the current WSL NAT per-frame msgpack path is not yet a qualified VINS transport.
+The earlier cadence repeat exposed an important transport distinction. Before the dedicated UE 5.8.1 render-target/cold-start repair, the Windows-native client delivered 20.56 FPS while WSL2 NAT delivered 15.00 FPS and once fell to 8.5 FPS in its worst window. The final producer now delivers 28.06 FPS at 640x480 and 26.73 FPS at 1280x720 over the same WSL2 NAT route, with worst windows of 27.5 and 25.0 FPS. The raw-RPC transport is therefore qualified at both resolutions. The 1280x720 ROS/VINS end-to-end path remains a separate pending gate because ROS serialization and VINS processing are not exercised by this benchmark.
 
 The instrumented synchronous rural repeat reached 17.65 unique FPS with zero duplicate timestamps. RTX 5060 Ti utilization averaged 39.46%, reached 46% maximum, and averaged 48.84 W against a 180 W board limit. Reducing the operator viewport again from 640x360 to 320x240 slightly reduced throughput to 17.28 FPS, so 640x360 remains the qualified viewport. These measurements rule out GPU saturation and operator viewport fill rate as the primary bottleneck on the reference workstation. The host is already on the Windows High performance plan; the installed GPU is an RTX 5060 Ti 16 GB with a 180 W limit. Driver or NVIDIA power-policy changes are therefore controlled experiments, not the primary fix.
 
@@ -124,4 +128,4 @@ The smallest change was implemented on `Drone-Age/Cosys-AirSim:indra-ue5.8`, nev
 4. Recreate readback staging after resolution/format changes and validate actual pixel content.
 5. Keep compression and disk recording outside Unreal's synchronous capture request.
 
-Next work is ROS 2/VINS transport, batched 200 Hz camera IMU, multiple image layers/cameras, and qualification under the final visual environment. Shared-memory/BGRA transport remains an optional optimization if RPC copying becomes the next bottleneck.
+Next work is VINS/ExternalNav integration, the 1280x720 ROS/VINS gate, multiple image layers/cameras, and qualification under the final visual environment. Batched high-rate IMU transport is complete. Shared-memory/BGRA transport remains an optional optimization if RPC copying becomes the next measured bottleneck.

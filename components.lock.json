@@ -15,7 +15,7 @@
     "third_party/Cosys-AirSim": {
       "url": "https://github.com/Drone-Age/Cosys-AirSim.git",
       "branch": "indra-ue5.8",
-      "commit": "1e22f7935ecabebe40d3f20834957467506a6cc1",
+      "commit": "eb4d858a1f9baf1e3c3346aba4e5cae3fd0c11a8",
       "release": "5.8-v3.4.1"
     },
     "third_party/ardupilot": {

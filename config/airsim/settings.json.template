@@ -2,6 +2,7 @@
   "SeeDocsAt": "https://cosys-lab.github.io/Cosys-AirSim/settings/",
   "SettingsVersion": 2.0,
   "SimMode": "Multirotor",
+  "ClockType": "ScalableClock",
   "ClockSpeed": __CLOCK_SPEED__,
   "ApiServerPort": __RPC_PORT__,
   "OriginGeopoint": {

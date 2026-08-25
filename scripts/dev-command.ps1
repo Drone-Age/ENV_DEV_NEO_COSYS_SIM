@@ -156,7 +156,7 @@ function Get-BackendCapabilities {
             vins = $false
             wind_command_ack = $false
             camera_fixed_rate_hz = $true
-            camera_imu_batched = $false
+            camera_imu_batched = $true
         }
         camera = [ordered]@{
             mode = 'fixed-rate-async-gpu-readback'
@@ -168,6 +168,15 @@ function Get-BackendCapabilities {
             )
             rejects_duplicate_timestamps = $true
             rejects_uniform_frames = $true
+        }
+        imu = [ordered]@{
+            mode = 'timestamp-preserving-batched-rpc'
+            nominal_hz = [double]$sensorProfile.camera_imu.nominal_hz
+            wall_budget_hz = [double]$sensorProfile.camera_imu.wall_budget_hz
+            batch_poll_hz = [double]$sensorProfile.camera_imu.batch_poll_hz
+            accepted_rate_hz = [ordered]@{ minimum = 190.0; maximum = 210.0 }
+            camera_nearest_imu_p95_max_ms = 5.0
+            rejects_history_overflow = $true
         }
         commands = [ordered]@{
             run = @('-Environment', '-RenderProfile', '-Headless', '-NoMissionPlanner', '-WithRos2', '-Preview')
@@ -445,9 +454,11 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
     $project = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\IndraCosysDemo.uproject'
     $ueLog = Join-Path $runDirectory 'unreal\Unreal.log'
     $sensorProfile = Get-Content -LiteralPath (Join-Path $script:RepoRoot 'config\ros2\sensor-profile.json') -Raw | ConvertFrom-Json
+    $viewportWidth = if ($RenderProfile -eq 'qualification') { 640 } else { 1280 }
+    $viewportHeight = if ($RenderProfile -eq 'qualification') { 360 } else { 720 }
     $arguments = @(
         $project, $environmentManifest.map_path,
-        '-game', '-windowed', '-ResX=1280', '-ResY=720', '-log',
+        '-game', '-windowed', "-ResX=$viewportWidth", "-ResY=$viewportHeight", '-log',
         "-abslog=$ueLog", "-settings=$($settings.Path)",
         "-IndraRenderProfile=$RenderProfile", "-IndraEnvironment=$($environmentManifest.id)",
         '-IndraAsyncCamera', '-IndraCameraName=0',
@@ -549,6 +560,10 @@ function Invoke-SmokeTest {
         $summary.status = 'PASS'
         $summary | Add-Member -NotePropertyName completed_at -NotePropertyValue (Get-Date).ToUniversalTime().ToString('o') -Force
         $summary | Add-Member -NotePropertyName mission -NotePropertyValue $mission -Force
+        if ($WithRos2) {
+            $bridgeStatus = Assert-RosBridgeTransport -RunDirectory $runDirectory
+            $summary | Add-Member -NotePropertyName ros_bridge_status -NotePropertyValue $bridgeStatus -Force
+        }
         Write-JsonFile $summary $summaryPath
         Write-Host "Smoke mission PASS: $runDirectory" -ForegroundColor Green
     } catch {
@@ -562,6 +577,23 @@ function Invoke-SmokeTest {
         Stop-RecordedProcesses $runDirectory
         Remove-Item -LiteralPath (Join-Path $script:RuntimeRoot 'active-run.txt') -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Assert-RosBridgeTransport([string]$RunDirectory) {
+    $statusPath = Join-Path $RunDirectory 'ros2\status.json'
+    if (-not (Test-Path -LiteralPath $statusPath)) { throw "ROS bridge status is missing: $statusPath" }
+    $status = Get-Content -Raw -LiteralPath $statusPath | ConvertFrom-Json
+    if ([string]$status.last_error) { throw "ROS bridge reported an error: $($status.last_error)" }
+    foreach ($topic in @('/sim/body/imu', '/sim/camera/imu')) {
+        $sample = $status.topics.PSObject.Properties[$topic].Value
+        if ($null -eq $sample) { throw "ROS bridge status is missing $topic" }
+        if ([int64]$sample.errors -ne 0) { throw "ROS bridge $topic recorded $($sample.errors) errors" }
+        if ([int64]$sample.batch_overflows -ne 0) { throw "ROS bridge $topic recorded $($sample.batch_overflows) batch overflows" }
+        if ([int64]$sample.backward_dropped -ne 0 -or [int64]$sample.duplicates_dropped -ne 0) {
+            throw "ROS bridge $topic did not preserve a strictly increasing sample sequence"
+        }
+    }
+    return $status
 }
 
 function Invoke-RosTopicTest {
@@ -585,11 +617,13 @@ function Invoke-RosTopicTest {
         $result.Output | Tee-Object -FilePath (Join-Path $runDirectory 'ros2\topic-probe.log') | ForEach-Object { Write-Host $_ }
         if ($result.ExitCode -ne 0) { throw "ROS topic conformance failed with code $($result.ExitCode)." }
         $probeResult = Get-Content -Raw -LiteralPath (Join-Path $runDirectory 'ros2\topic-probe.json') | ConvertFrom-Json
+        $bridgeStatus = Assert-RosBridgeTransport -RunDirectory $runDirectory
         $summaryPath = Join-Path $runDirectory 'summary.json'
         $summary = Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json
         $summary.status = 'PASS'
         $summary | Add-Member -NotePropertyName completed_at -NotePropertyValue (Get-Date).ToUniversalTime().ToString('o') -Force
         $summary | Add-Member -NotePropertyName ros_topic_probe -NotePropertyValue $probeResult -Force
+        $summary | Add-Member -NotePropertyName ros_bridge_status -NotePropertyValue $bridgeStatus -Force
         Write-JsonFile $summary $summaryPath
         Write-Host "ROS topic conformance PASS: $runDirectory" -ForegroundColor Green
     } catch {

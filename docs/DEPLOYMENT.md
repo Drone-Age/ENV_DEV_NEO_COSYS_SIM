@@ -124,7 +124,7 @@ Generated plugin files, `Binaries`, `Intermediate`, `Saved`, Derived Data and `.
 .\dev.ps1 run
 ```
 
-The launcher discovers the current WSL and Windows host IPs on every run and writes a run-local `settings.json`. Interactive `run` starts Unreal first, ArduCopter SITL second and Mission Planner last. Automated `test` deliberately does not open Mission Planner; its controller owns TCP 5780 while the already-verified observer UI stays out of the way. Neither command reads or writes `Documents\AirSim\settings.json`.
+The launcher discovers the current WSL and Windows host IPs on every run and writes a run-local `settings.json`. It explicitly selects `ScalableClock` with `ClockSpeed=1`: Cosys otherwise assigns its SimpleFlight-oriented `SteppableClock` default to ArduCopter and can fall below real time when the 3 ms physics loop is saturated. Interactive `run` starts Unreal first, ArduCopter SITL second and Mission Planner last. Automated `test` deliberately does not open Mission Planner; its controller owns TCP 5780 while the already-verified observer UI stays out of the way. Neither command reads or writes `Documents\AirSim\settings.json`.
 
 The default is the deterministic Blocks qualification profile. Environment and rendering choices are explicit and included in `summary.json`:
 
@@ -177,7 +177,9 @@ After the ordinary flight PASS, verify the optional SIM2-compatible sensor graph
 .\dev.ps1 test -Environment blocks -SkipBuild -WithRos2
 ```
 
-The first command requires all six topics, exact frame IDs, strictly increasing simulation timestamps, valid 640x480 RGB8 payload/calibration, synchronized image metadata and wall-clock delivery rates of at least 20 Hz for clock/odom, 50 Hz for both initial IMU feeds and 10 Hz for image/camera-info. The second repeats the full flight with the bridge active. Neither command launches Mission Planner. `setup` uses an existing `/opt/iros2j` when present; a clean Ubuntu 24.04 machine receives the official `/opt/ros/jazzy` packages and may request its sudo password.
+The first command requires all six topics, exact frame IDs, strictly increasing simulation timestamps, valid 640x480 RGB8 payload/calibration and synchronized image metadata. Both IMU feeds must remain within 190-210 Hz in wall and simulation time, camera-nearest-IMU p95 must be at most 5 ms, and the bridge must report zero history overflow/error. Clock/odom require at least 20 wall Hz and image/camera-info at least 10 wall Hz. The second command repeats the full flight with the bridge active and applies the same transport-integrity checks. Neither command launches Mission Planner. `setup` uses an existing `/opt/iros2j` when present; a clean Ubuntu 24.04 machine receives the official `/opt/ros/jazzy` packages and may request its sudo password.
+
+The reserved ports allow functional SIM2/NewSIM coexistence, but rate qualification must run without a competing Gazebo, VINS, rosbag or GPU-heavy job on the same workstation. Such a load changes wall cadence and invalidates performance evidence; it is not a reason to stop another user-owned simulation. Evidence `2026-08-25_075418_test_91c0c67e` was completed before the concurrent SIM2 VINS-climb run began.
 
 Do not change WSL networking while SIM2 or NewSIM is running. A controlled camera-transport A/B experiment is available only after both stacks are stopped:
 

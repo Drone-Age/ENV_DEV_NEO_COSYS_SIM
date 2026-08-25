@@ -71,6 +71,7 @@ class TopicStats:
     duplicates_dropped: int = 0
     backward_dropped: int = 0
     errors: int = 0
+    batch_overflows: int = 0
 
 
 @dataclass
@@ -116,6 +117,7 @@ class BridgeStats:
                     "duplicates_dropped": stats.duplicates_dropped,
                     "backward_dropped": stats.backward_dropped,
                     "errors": stats.errors,
+                    "batch_overflows": stats.batch_overflows,
                 }
             return {"schema": 1, "topics": topics, "last_error": self.last_error}
 
@@ -221,11 +223,44 @@ class CosysRosBridge(Node):
         vehicle = self.profile["vehicle"]
         sensor = self.profile[profile_key]
         previous_orientation = None
+        published_hz = float(sensor["wall_budget_hz"])
+        poll_period = 1.0 / float(sensor.get("batch_poll_hz", 100.0))
+        cursor_ns = int(client.getImuData(imu_name=sensor["name"], vehicle_name=vehicle).time_stamp)
+        next_poll = time.monotonic()
+        quota_updated = next_poll
+        publish_quota = 0.0
         while not self.stop_event.is_set():
-            data = client.getImuData(imu_name=sensor["name"], vehicle_name=vehicle)
-            stamp_ns = int(data.time_stamp)
+            next_poll += poll_period
             topic = "/sim/body/imu" if profile_key == "body_imu" else "/sim/camera/imu"
-            if self.stats.accepted(topic, stamp_ns):
+            batch = client.getImuDataBatch(
+                imu_name=sensor["name"], vehicle_name=vehicle,
+                after_timestamp=cursor_ns, max_samples=512)
+            if batch.overflow:
+                with self.stats.lock:
+                    self.stats.topics.setdefault(topic, TopicStats()).batch_overflows += 1
+            if not batch.samples:
+                self.stop_event.wait(max(0.0, next_poll - time.monotonic()))
+                continue
+            cursor_ns = max(cursor_ns, int(batch.samples[-1].time_stamp))
+            now = time.monotonic()
+            publish_quota += max(0.0, now - quota_updated) * published_hz
+            quota_updated = now
+            emit_count = min(len(batch.samples), int(publish_quota))
+            if emit_count <= 0:
+                self.stop_event.wait(max(0.0, next_poll - time.monotonic()))
+                continue
+            publish_quota -= emit_count
+            # Select samples across the complete source interval instead of
+            # taking a prefix. This preserves the newest timestamp and bounds
+            # camera-nearest-IMU error while amortizing RPC/msgpack overhead.
+            selected = [
+                batch.samples[math.ceil((index + 1) * len(batch.samples) / emit_count) - 1]
+                for index in range(emit_count)
+            ]
+            for data in selected:
+                stamp_ns = int(data.time_stamp)
+                if not self.stats.accepted(topic, stamp_ns):
+                    continue
                 message = Imu()
                 message.header.stamp = ros_time(stamp_ns)
                 message.header.frame_id = sensor["frame_id"]
@@ -234,8 +269,7 @@ class CosysRosBridge(Node):
                 assign_vector(message.angular_velocity, frd_to_flu(data.angular_velocity))
                 assign_vector(message.linear_acceleration, frd_to_flu(data.linear_acceleration))
                 publisher.publish(message)
-            else:
-                self.stop_event.wait(0.001)
+            self.stop_event.wait(max(0.0, next_poll - time.monotonic()))
 
     def camera_worker(self) -> None:
         client = self.client()
