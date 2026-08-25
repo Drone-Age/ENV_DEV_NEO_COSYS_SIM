@@ -79,9 +79,11 @@ The expected source identities are enforced by `components.lock.json`:
 - `third_party/ardupilot` at `ebceaa75aa175c6b6b52f69a8da8337e2919d62b`.
 - `third_party/VINS-NEO` at `0c09aecfebbe7b6bcdd55a3697aef6ba76ececc1`, branch `indra-sim2-compat`.
 - `third_party/iMAVROS` at `2bbd27b1a7b40bbf000d664b058f09b5db9dd518`.
-- `third_party/vio_stack` at `a4e814e5a9138f7be63394b2c1cdac05d13d2a9c`, branch `indra-sim2-compat`.
+- `third_party/vio_stack` at `ab4552edba6dd7aeb3b96bd5667906518d15110a`, branch `indra-sim2-compat`.
 
 The vio_stack lock also verifies its exact nested iHUB, iHUB-STM, iCAM and iIMU revisions. Compatibility branches publish the previously local SIM2 commits without changing any component's `main` branch.
+
+The compatibility iHUB server supports a Cosys camera servo backend over `simSetCameraPose`. This preserves the SIM2 UART/calibration and `/camera/tilt/*` contracts; it is not a VINS acceptance claim until the live gimbal and camera-IMU motion gates pass.
 
 Do not continue while `doctor` reports a failure. A Mission Planner warning before `setup` is expected.
 
