@@ -79,11 +79,11 @@ The expected source identities are enforced by `components.lock.json`:
 - `third_party/ardupilot` at `ebceaa75aa175c6b6b52f69a8da8337e2919d62b`.
 - `third_party/VINS-NEO` at `0c09aecfebbe7b6bcdd55a3697aef6ba76ececc1`, branch `indra-sim2-compat`.
 - `third_party/iMAVROS` at `2bbd27b1a7b40bbf000d664b058f09b5db9dd518`.
-- `third_party/vio_stack` at `ab4552edba6dd7aeb3b96bd5667906518d15110a`, branch `indra-sim2-compat`.
+- `third_party/vio_stack` at `f93c2e6c7501ee95ed92e5f66f43096d4f96566b`, branch `indra-sim2-compat`.
 
 The vio_stack lock also verifies its exact nested iHUB, iHUB-STM, iCAM and iIMU revisions. Compatibility branches publish the previously local SIM2 commits without changing any component's `main` branch.
 
-The compatibility iHUB server supports a Cosys camera servo backend over `simSetCameraPose`. This preserves the SIM2 UART/calibration and `/camera/tilt/*` contracts; it is not a VINS acceptance claim until the live gimbal and camera-IMU motion gates pass.
+The compatibility iHUB server supports a Cosys camera servo backend over `simSetCameraPose` and publishes its applied angle/rate as `/camera/tilt/joint_state`. The Cosys bridge uses that authoritative state to rotate the original timestamped CameraImu samples into the moving camera frame. This preserves the SIM2 UART/calibration and `/camera/tilt/*` contracts; it is not a VINS acceptance claim until the live gimbal and camera-IMU motion gates pass.
 
 Do not continue while `doctor` reports a failure. A Mission Planner warning before `setup` is expected.
 
@@ -102,13 +102,14 @@ Do not continue while `doctor` reports a failure. A Mission Planner warning befo
 - validates or installs the ArduPilot Ubuntu toolchain and `~/venv-ardupilot` Python environment;
 - installs the `rpc-msgpack` client used by the reproducible Cosys camera benchmark;
 - validates the existing SIM2 `/opt/iros2j` runtime or installs the official ROS 2 Jazzy base/message packages under `/opt/ros/jazzy` on Ubuntu 24.04;
+- prepares `colcon`, `rosdep`, Eigen, Ceres, OpenCV and serial dependencies for the pinned source-built VINS overlay;
 - creates two narrow rules required by current WSL networking: Windows inbound UDP 9022 for UnrealEditor, and Hyper-V/WSL inbound UDP 9023 for the WSL creator. No port range is opened.
 
 It also initialises the selected environment submodule recursively. `blocks` is built into the parent and requires no private checkout. Environment commits are pinned in `environments.lock.json`.
 
 Ubuntu can ask for its `sudo` password during first-time package installation. Windows can ask for UAC consent for the firewall rules. The Windows rule applies to the exact UnrealEditor executable and UDP 9022; the Hyper-V rule applies only to WSL, UDP 9023, and the local subnet. These are expected security boundaries, not reasons to broaden permissions.
 
-## 4. Build all three layers
+## 4. Build all four layers
 
 Close Unreal Editor and Visual Studio, then run:
 
@@ -122,6 +123,7 @@ The build order is:
 2. Generated AirSim plugin staged into `unreal\IndraCosysDemo\Plugins\AirSim` (ignored by Git).
 3. `IndraCosysDemoEditor` for UE 5.8.1, Development/Win64, Windows SDK 10.0.22621.0, explicitly enabling the selected environment plugin so a clean clone cannot depend on a stale DLL.
 4. ArduCopter SITL in Ubuntu 24.04.
+5. Pinned iMAVROS, VINS-NEO, iHUB, VINS initializer and vision bridge source overlay under `.runtime/vins-overlay`.
 
 Generated plugin files, `Binaries`, `Intermediate`, `Saved`, Derived Data and `.runtime` must remain untracked. On HDD-based workspaces, place disposable Unreal `Intermediate` and Derived Data caches on SSD/NVMe when possible; a single AirSim unity unit took about 22 minutes on the reference SATA disk.
 

@@ -22,7 +22,10 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import CameraInfo, Image, Imu
+from sensor_msgs.msg import JointState
 from std_msgs.msg import String
+
+from gimbal_imu import apply_gimbal_to_flu
 
 
 def ros_time(timestamp_ns: int) -> Time:
@@ -122,6 +125,55 @@ class BridgeStats:
             return {"schema": 1, "topics": topics, "last_error": self.last_error}
 
 
+@dataclass
+class GimbalState:
+    angle_rad: float
+    rate_rad_s: float = 0.0
+    updated_wall: float = 0.0
+    accepted: int = 0
+    rejected: int = 0
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def update(self, message: JointState) -> None:
+        try:
+            index = message.name.index("camera_tilt_joint")
+            angle = float(message.position[index])
+            rate = float(message.velocity[index]) if index < len(message.velocity) else 0.0
+            if (
+                not math.isfinite(angle)
+                or not math.isfinite(rate)
+                or not -0.05 <= angle <= math.pi / 2.0 + 0.05
+            ):
+                raise ValueError("invalid camera tilt joint state")
+        except (ValueError, IndexError):
+            with self.lock:
+                self.rejected += 1
+            return
+        with self.lock:
+            self.angle_rad = angle
+            self.rate_rad_s = rate
+            self.updated_wall = time.monotonic()
+            self.accepted += 1
+
+    def sample(self) -> tuple[float, float]:
+        with self.lock:
+            # A stale angle remains the physical held position; only the servo
+            # velocity fails closed to zero after status transport stops.
+            rate = self.rate_rad_s if time.monotonic() - self.updated_wall <= 0.5 else 0.0
+            return self.angle_rad, rate
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            age = None if self.updated_wall == 0.0 else time.monotonic() - self.updated_wall
+            return {
+                "angle_rad": self.angle_rad,
+                "rate_rad_s": self.rate_rad_s,
+                "status_age_s": age,
+                "accepted": self.accepted,
+                "rejected": self.rejected,
+            }
+
+
 class CosysRosBridge(Node):
     def __init__(self, host: str, port: int, profile: dict, status_path: pathlib.Path) -> None:
         super().__init__("indra_cosys_ros2_bridge")
@@ -132,6 +184,9 @@ class CosysRosBridge(Node):
         self.stop_event = threading.Event()
         self.stats = BridgeStats()
         self.threads: list[threading.Thread] = []
+        self.gimbal = GimbalState(
+            angle_rad=float(profile["camera_imu"].get("gimbal_default_angle_rad", 0.0))
+        )
 
         sensor_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
@@ -158,6 +213,9 @@ class CosysRosBridge(Node):
         self.image_publisher = self.create_publisher(Image, "/sim/camera/image_raw", image_qos)
         self.camera_info_publisher = self.create_publisher(CameraInfo, "/sim/camera/camera_info", image_qos)
         self.status_publisher = self.create_publisher(String, "/sim/cosys_bridge/status", reliable_qos)
+        self.create_subscription(
+            JointState, "/camera/tilt/joint_state", self.gimbal.update, reliable_qos
+        )
         self.create_timer(1.0, self.publish_status)
 
     def client(self):
@@ -265,9 +323,18 @@ class CosysRosBridge(Node):
                 message.header.stamp = ros_time(stamp_ns)
                 message.header.frame_id = sensor["frame_id"]
                 previous_orientation = ned_frd_to_enu_flu(data.orientation, previous_orientation)
-                assign_quaternion(message.orientation, previous_orientation)
-                assign_vector(message.angular_velocity, frd_to_flu(data.angular_velocity))
-                assign_vector(message.linear_acceleration, frd_to_flu(data.linear_acceleration))
+                orientation = previous_orientation
+                angular_velocity = frd_to_flu(data.angular_velocity)
+                linear_acceleration = frd_to_flu(data.linear_acceleration)
+                if profile_key == "camera_imu" and sensor.get("mounting") == "ihub-pitched":
+                    angle_rad, rate_rad_s = self.gimbal.sample()
+                    orientation, angular_velocity, linear_acceleration = apply_gimbal_to_flu(
+                        orientation, angular_velocity, linear_acceleration,
+                        angle_rad, rate_rad_s,
+                    )
+                assign_quaternion(message.orientation, orientation)
+                assign_vector(message.angular_velocity, angular_velocity)
+                assign_vector(message.linear_acceleration, linear_acceleration)
                 publisher.publish(message)
             self.stop_event.wait(max(0.0, next_poll - time.monotonic()))
 
@@ -320,6 +387,7 @@ class CosysRosBridge(Node):
 
     def publish_status(self) -> None:
         snapshot = self.stats.snapshot()
+        snapshot["gimbal"] = self.gimbal.snapshot()
         message = String()
         message.data = json.dumps(snapshot, separators=(",", ":"), sort_keys=True)
         self.status_publisher.publish(message)

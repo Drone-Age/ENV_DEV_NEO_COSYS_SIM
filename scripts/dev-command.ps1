@@ -344,6 +344,13 @@ function Invoke-Setup {
     }
     Write-Pass 'ROS 2 Jazzy' 'SIM2-compatible bridge runtime available'
 
+    Write-Step 'Preparing pinned VINS/iMAVROS/vio_stack overlay dependencies'
+    $repoWsl = Convert-ToWslPath $script:RepoRoot
+    $vinsSetup = Convert-ToWslPath (Join-Path $PSScriptRoot 'wsl\setup_vins_overlay.sh')
+    & wsl.exe -d $script:Lock.platform.wsl_distribution -- bash $vinsSetup $repoWsl
+    if ($LASTEXITCODE -ne 0) { throw 'VINS overlay prerequisite setup failed.' }
+    Write-Pass 'VINS overlay prerequisites' 'colcon, rosdep and native libraries ready'
+
     $ue = Get-UeRoot
     if ($ue) {
         try {
@@ -399,7 +406,13 @@ function Invoke-Build {
     Write-Step 'Building ArduCopter SITL in Ubuntu 24.04'
     $ardupilot = Convert-ToWslPath (Join-Path $script:RepoRoot 'third_party\ardupilot')
     Invoke-Wsl -Command "cd '$ardupilot' && source ~/venv-ardupilot/bin/activate && ./waf configure --board sitl && ./waf copter" | Out-Null
-    Write-Pass 'Build' 'Cosys-AirSim, IndraCosysDemoEditor and ArduCopter SITL'
+
+    Write-Step 'Building the pinned ROS 2 VINS/iMAVROS/vio_stack overlay'
+    $repoWsl = Convert-ToWslPath $script:RepoRoot
+    $runtimeWsl = Convert-ToWslPath $script:RuntimeRoot
+    $vinsBuilder = Convert-ToWslPath (Join-Path $PSScriptRoot 'wsl\build_vins_overlay.sh')
+    Invoke-Wsl -Command "bash '$vinsBuilder' '$repoWsl' '$runtimeWsl'" | Out-Null
+    Write-Pass 'Build' 'Cosys-AirSim, IndraCosysDemoEditor, ArduCopter SITL and pinned VINS overlay'
 }
 
 function Start-RosBridge([string]$RunDirectory, [object]$Settings) {

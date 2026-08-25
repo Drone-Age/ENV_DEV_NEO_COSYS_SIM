@@ -37,10 +37,10 @@
     "third_party/vio_stack": {
       "url": "https://github.com/Drone-Age/vio_stack.git",
       "branch": "indra-sim2-compat",
-      "commit": "ab4552edba6dd7aeb3b96bd5667906518d15110a",
+      "commit": "f93c2e6c7501ee95ed92e5f66f43096d4f96566b",
       "role": "SIM2 iCAM/iIMU/iHUB, VINS initializer and vision bridge",
       "nested_submodules": {
-        "src/actuators/iHUB": "1bccaab3a84e2025f500a450e492b67c8efaf07c",
+        "src/actuators/iHUB": "38a2351cb9b3e1d9fcbdeb0f5e2b6054995c86ea",
         "src/actuators/iHUB/firmware/iHUB-STM": "c2186b7e4d0caff9defbbaa18a9d19b9fed01a75",
         "src/sensors/iCAM": "d2faa3cdd2d1c82209dee6480a097db47f4a1477",
         "src/sensors/iIMU": "872d6fa47ca5ff86a5b389c3ff8d1a790a98f815"
