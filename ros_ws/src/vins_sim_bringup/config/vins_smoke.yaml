@@ -1,0 +1,65 @@
+%YAML:1.0
+
+imu_topic: "/sim/camera/imu"
+image_topic: "/sim/camera/image_raw"
+output_path: "/tmp/vins_output/"
+
+model_type: PINHOLE
+camera_name: indra_cosys_imx477_cs2006
+image_width: 640
+image_height: 480
+distortion_parameters:
+  k1: 0.0
+  k2: 0.0
+  p1: 0.0
+  p2: 0.0
+projection_parameters:
+  fx: 502.299385
+  fy: 502.299385
+  cx: 320.0
+  cy: 240.0
+
+# Optical camera frame -> camera-mounted H30 FLU frame. The bridge rotates
+# both image pose and CameraImu through the authoritative iHUB joint angle.
+estimate_extrinsic: 0
+extrinsicRotation: !!opencv-matrix
+  rows: 3
+  cols: 3
+  dt: d
+  data: [0.0, 0.0, 1.0,
+         -1.0, 0.0, 0.0,
+         0.0, -1.0, 0.0]
+extrinsicTranslation: !!opencv-matrix
+  rows: 3
+  cols: 1
+  dt: d
+  data: [0.0, 0.0, 0.0]
+
+max_cnt: 260
+min_dist: 20
+freq: 20
+F_threshold: 1.0
+show_track: 1
+equalize: 1
+fisheye: 0
+max_solver_time: 0.05
+max_num_iterations: 8
+keyframe_parallax: 8.0
+
+acc_n: 0.08
+acc_w: 0.0002
+gyr_n: 0.01
+gyr_w: 0.00002
+g_norm: 9.80665
+
+loop_closure: 0
+load_previous_pose_graph: 0
+fast_relocalization: 0
+pose_graph_save_path: "/tmp/vins_output/pose_graph/"
+estimate_td: 0
+td: 0.0
+rolling_shutter: 0
+rolling_shutter_tr: 0.0
+save_image: 0
+visualize_imu_forward: 0
+visualize_camera_size: 0.4

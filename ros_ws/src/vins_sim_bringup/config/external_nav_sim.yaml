@@ -1,0 +1,58 @@
+vision_bridge:
+  ros__parameters:
+    input_topic: "/vins_estimator/imu_propagate"
+    output_topic: "/mavros/odometry/out"
+    health_topic: "/vio/external_nav/health"
+    initialization_status_topic: "/vio/initialization/status"
+    camera_mount_status_topic: "/camera/tilt/status"
+    input_parent_frame: "world"
+    input_child_frame: ""
+    output_parent_frame: "odom"
+    output_child_frame: "base_link"
+
+    camera_mount_timeout_s: 0.5
+    camera_hinge_pivot_xyz: [0.10, 0.0, 0.04]
+    camera_sensor_offset_xyz: [0.10, 0.0, 0.0]
+    camera_mount_zero_rpy: [0.0, 0.0, 0.0]
+    camera_alignment_angle_rad: 0.7853981633974483
+    camera_alignment_angle_tolerance_rad: 0.05235987755982989
+    camera_alignment_max_rate_rad_s: 0.03490658503988659
+
+    alignment_confirmed: false
+    alignment_translation_xyz: [0.0, 0.0, 0.0]
+    alignment_yaw_deg: 0.0
+    alignment_reference_topic: "/mavros/local_position/odom"
+    alignment_enable_topic: "/sim/qualification/external_nav_alignment_enable"
+    alignment_admission_topic: "/sim/qualification/external_nav_alignment_admission"
+    alignment_reference_max_age_s: 0.25
+    alignment_reference_samples: 10
+    alignment_reference_min_baseline_m: 0.0
+    alignment_reference_max_spread_m: 1.0
+    alignment_reference_max_yaw_spread_deg: 5.0
+
+    input_timeout_s: 0.25
+    max_future_offset_s: 0.20
+    max_sample_gap_s: 0.20
+    min_consecutive_samples: 10
+    max_position_covariance_trace_m2: 300.0
+    default_position_variance_m2: 0.25
+    confidence_feature_topic: "/feature_tracker/feature"
+    confidence_feature_timeout_s: 0.5
+    confidence_altitude_topic: "/mavros/local_position/pose"
+    confidence_altitude_source_type: "pose_z"
+    confidence_altitude_timeout_s: 1.0
+    confidence_reference_altitude_m: 25.0
+    confidence_camera_focal_length_px: 502.299385
+    confidence_reference_focal_length_px: 502.299385
+    confidence_min_feature_count: 15
+    confidence_nominal_feature_count: 120
+    confidence_min_position_variance_m2: 0.04
+    confidence_max_position_variance_m2: 100.0
+    confidence_min_velocity_variance_m2ps2: 0.1225
+    confidence_max_velocity_variance_m2ps2: 400.0
+    max_position_jump_m: 5.0
+    max_speed_mps: 0.0
+    quaternion_norm_tolerance: 0.05
+    max_output_rate_hz: 30.0
+    health_rate_hz: 5.0
+    publish_velocity: true

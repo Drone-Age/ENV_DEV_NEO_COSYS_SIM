@@ -1,6 +1,9 @@
 .runtime/
 .venv/
 logs/
+/build/
+/install/
+/log/
 *.log
 __pycache__/
 *.py[cod]

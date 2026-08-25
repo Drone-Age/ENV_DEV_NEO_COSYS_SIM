@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'stop', 'logs', 'env', 'capabilities')]
+    [ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'vins-test', 'stop', 'logs', 'env', 'capabilities')]
     [string]$Command = 'doctor',
     [Parameter(Position = 1)]
     [ValidateSet('list', 'doctor', 'build-map')]

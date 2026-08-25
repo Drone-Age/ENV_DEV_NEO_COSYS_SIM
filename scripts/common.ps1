@@ -316,7 +316,7 @@ function Stop-RecordedProcesses([string]$RunDirectory) {
     # calls time out against a dead Cosys server and contaminate a PASS bundle
     # with false bridge errors during normal cleanup.
     $stopper = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\stop_process_group.sh')
-    foreach ($relativePidPath in @('ros2\wsl.pid', 'sitl\wsl.pid', 'sitl\sitl.pid')) {
+    foreach ($relativePidPath in @('vins\wsl.pid', 'ros2\wsl.pid', 'sitl\wsl.pid', 'sitl\sitl.pid')) {
         $wslPidFile = Join-Path $RunDirectory $relativePidPath
         if (Test-Path -LiteralPath $wslPidFile) {
             $pidValue = (Get-Content -Raw -LiteralPath $wslPidFile).Trim()

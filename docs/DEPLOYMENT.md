@@ -183,10 +183,13 @@ After the ordinary flight PASS, verify the optional SIM2-compatible sensor graph
 
 ```powershell
 .\dev.ps1 ros-test -Environment blocks -SkipBuild
+.\dev.ps1 vins-test -Environment blocks -SkipBuild
 .\dev.ps1 test -Environment blocks -SkipBuild -WithRos2
 ```
 
 The first command requires all six topics, exact frame IDs, strictly increasing simulation timestamps, valid 640x480 RGB8 payload/calibration and synchronized image metadata. Both IMU feeds must remain within 190-210 Hz in wall and simulation time, camera-nearest-IMU p95 must be at most 5 ms, and the bridge must report zero history overflow/error. Clock/odom require at least 20 wall Hz and image/camera-info at least 10 wall Hz. The second command repeats the full flight with the bridge active and applies the same transport-integrity checks. Neither command launches Mission Planner. `setup` uses an existing `/opt/iros2j` when present; a clean Ubuntu 24.04 machine receives the official `/opt/ros/jazzy` packages and may request its sudo password.
+
+`vins-test` is the first VINS acceptance gate. It requires the complete iHUB 0-90 degree sweep, moving-frame CameraImu evidence, at least 15 tracked features, VINS initializer READY, fresh ExternalNav READY and `/mavros/odometry/out`. It never launches Mission Planner and stores its verdict under the run's `vins/` evidence directory.
 
 The reserved ports allow functional SIM2/NewSIM coexistence, but rate qualification must run without a competing Gazebo, VINS, rosbag or GPU-heavy job on the same workstation. Such a load changes wall cadence and invalidates performance evidence; it is not a reason to stop another user-owned simulation. Evidence `2026-08-25_075418_test_91c0c67e` was completed before the concurrent SIM2 VINS-climb run began.
 

@@ -38,7 +38,7 @@ fi
 packages=(
     mavros mavros_extras
     feature_tracker vins_estimator
-    ihub vins_initializer vision_bridge
+    ihub vins_initializer vision_bridge vins_sim_bringup
 )
 
 colcon --log-base "$overlay_root/log" build \

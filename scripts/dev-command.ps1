@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'stop', 'logs', 'env', 'capabilities')][string]$Command,
+    [Parameter(Mandatory)][ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'vins-test', 'stop', 'logs', 'env', 'capabilities')][string]$Command,
     [ValidateSet('list', 'doctor', 'build-map')][string]$EnvironmentCommand = 'list',
     [string]$Environment = 'blocks',
     [ValidateSet('qualification', 'visual')][string]$RenderProfile = 'qualification',
@@ -455,7 +455,21 @@ function Start-RosBridge([string]$RunDirectory, [object]$Settings) {
     Write-Pass 'ROS 2 bridge' "domain $domainId, SIM2-compatible topics published"
 }
 
-function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$StartRos2) {
+function Start-VinsStack([string]$RunDirectory, [object]$Settings) {
+    $repoWsl = Convert-ToWslPath $script:RepoRoot
+    $runWsl = Convert-ToWslPath $RunDirectory
+    $launcher = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\start_vins_stack.sh')
+    $domainId = [int]$script:Config.future_ros_domain_id
+    $command = "bash '$launcher' '$repoWsl' '$runWsl' '$($Settings.Network.WindowsIp)' '$($script:Config.ports.cosys_rpc_tcp)' '$($script:Config.ports.mavlink_tcp)' '$domainId' '900'"
+    $result = Invoke-Wsl -Command $command -AllowFailure
+    if ($result.ExitCode -ne 0) { throw "Unable to launch VINS stack: $($result.Output -join ' ')" }
+    $check = Invoke-Wsl -Command "test -s '$runWsl/vins/wsl.pid' && kill -0 `$(cat '$runWsl/vins/wsl.pid')" -AllowFailure
+    if ($check.ExitCode -ne 0) { throw "VINS stack exited during startup; see $RunDirectory\vins\stack.log" }
+    Write-Pass 'VINS stack' "pinned overlay launched in ROS domain $domainId"
+}
+
+function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$StartRos2, [switch]$StartVins) {
+    if ($StartVins -and -not $StartRos2) { throw 'VINS requires the Cosys ROS 2 bridge.' }
     if ($Distro -ne $script:Lock.platform.wsl_distribution) { throw "This pinned bundle requires WSL distribution '$($script:Lock.platform.wsl_distribution)', received '$Distro'." }
     $environmentManifest = Get-RuntimeEnvironmentManifest -EnvironmentId $Environment -Preview:$Preview
     if ($environmentManifest.readiness -eq 'preview') {
@@ -466,7 +480,9 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
         $plugin = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Plugins\AirSim\AirSim.uplugin'
         $editorDll = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Binaries\Win64\UnrealEditor-IndraCosysDemo.dll'
         $sitl = Join-Path $script:RepoRoot 'third_party\ardupilot\build\sitl\bin\arducopter'
-        if (-not (Test-Path -LiteralPath $plugin) -or -not (Test-Path -LiteralPath $editorDll) -or -not (Test-Path -LiteralPath $sitl)) { Invoke-Build }
+        $vinsOverlay = Join-Path $script:RuntimeRoot 'vins-overlay\install\setup.bash'
+        $vinsBuildMissing = $StartVins -and -not (Test-Path -LiteralPath $vinsOverlay)
+        if (-not (Test-Path -LiteralPath $plugin) -or -not (Test-Path -LiteralPath $editorDll) -or -not (Test-Path -LiteralPath $sitl) -or $vinsBuildMissing) { Invoke-Build }
     }
     if (Get-ActiveRun) { throw 'An environment run is already active. Use .\dev.ps1 stop first.' }
     foreach ($port in @($script:Config.ports.cosys_control_udp, $script:Config.ports.sitl_sensor_udp, $script:Config.ports.mavlink_tcp, $script:Config.ports.mission_planner_tcp, $script:Config.ports.cosys_rpc_tcp)) {
@@ -548,6 +564,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
     Write-Pass 'MAVLink listeners' "TCP $($script:Config.ports.mavlink_tcp)/$($script:Config.ports.mission_planner_tcp) ready"
 
     if ($StartRos2) { Start-RosBridge -RunDirectory $runDirectory -Settings $settings }
+    if ($StartVins) { Start-VinsStack -RunDirectory $runDirectory -Settings $settings }
 
     if ($WithMissionPlanner -or -not $NoMissionPlanner) {
         & (Join-Path $PSScriptRoot 'mission-planner.ps1') -Action Start -RunDirectory $runDirectory -Port $script:Config.ports.mission_planner_tcp
@@ -560,7 +577,9 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
         ardupilot_commit = $script:Lock.submodules.'third_party/ardupilot'.commit
         ue = $script:Lock.platform.unreal_engine; settings = $settings.Path
         environment = [ordered]@{ id = $environmentManifest.id; version = $environmentManifest.version; readiness = $environmentManifest.readiness; preview_authorized = [bool]$Preview; map = $environmentManifest.map_path; render_profile = $RenderProfile }
-        endpoints = $script:Config.ports; network = $settings.Network; ros2 = [ordered]@{ enabled = [bool]$StartRos2; domain_id = [int]$script:Config.future_ros_domain_id }
+        endpoints = $script:Config.ports; network = $settings.Network
+        ros2 = [ordered]@{ enabled = [bool]$StartRos2; domain_id = [int]$script:Config.future_ros_domain_id }
+        vins = [ordered]@{ enabled = [bool]$StartVins; overlay = '.runtime/vins-overlay/install/setup.bash' }
     }
     Write-JsonFile $metadata (Join-Path $runDirectory 'summary.json')
     return $runDirectory
@@ -672,6 +691,53 @@ function Invoke-RosTopicTest {
     }
 }
 
+function Invoke-VinsRuntimeTest {
+    try {
+        $runDirectory = Start-Environment -ForTest $true -NoMissionPlanner -StartRos2 -StartVins
+    } catch {
+        $startupRun = Get-ActiveRun
+        if ($startupRun) { Stop-RecordedProcesses $startupRun }
+        Remove-Item -LiteralPath (Join-Path $script:RuntimeRoot 'active-run.txt') -Force -ErrorAction SilentlyContinue
+        throw
+    }
+    try {
+        $runWsl = Convert-ToWslPath $runDirectory
+        $repoWsl = Convert-ToWslPath $script:RepoRoot
+        $probe = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\vins_runtime_probe.py')
+        $output = "$runWsl/vins/runtime-probe.json"
+        $domainId = [int]$script:Config.future_ros_domain_id
+        $command = "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; else source /opt/ros/jazzy/setup.bash; fi; source '$repoWsl/.runtime/vins-overlay/install/setup.bash'; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$probe' --timeout 300 --output '$output'"
+        Write-Step 'Waiting for iHUB sweep, moving CameraImu, VINS TRACKING and ExternalNav READY'
+        $result = Invoke-Wsl -Command $command -AllowFailure
+        $result.Output | Tee-Object -FilePath (Join-Path $runDirectory 'vins\runtime-probe.log') | ForEach-Object { Write-Host $_ }
+        if ($result.ExitCode -ne 0) { throw "VINS runtime qualification failed with code $($result.ExitCode)." }
+        $probeResult = Get-Content -Raw -LiteralPath (Join-Path $runDirectory 'vins\runtime-probe.json') | ConvertFrom-Json
+        if ($probeResult.status -ne 'PASS') { throw "VINS runtime verdict is $($probeResult.status)." }
+        $bridgeStatus = Assert-RosBridgeTransport -RunDirectory $runDirectory
+        if ([int64]$bridgeStatus.gimbal.rejected -ne 0) { throw 'ROS bridge rejected an authoritative gimbal sample.' }
+        $summaryPath = Join-Path $runDirectory 'summary.json'
+        $summary = Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json
+        $summary.status = 'PASS'
+        $summary | Add-Member -NotePropertyName completed_at -NotePropertyValue (Get-Date).ToUniversalTime().ToString('o') -Force
+        $summary | Add-Member -NotePropertyName vins_runtime_probe -NotePropertyValue $probeResult -Force
+        $summary | Add-Member -NotePropertyName ros_bridge_status -NotePropertyValue $bridgeStatus -Force
+        Write-JsonFile $summary $summaryPath
+        Write-Host "VINS runtime PASS: $runDirectory" -ForegroundColor Green
+    } catch {
+        $summaryPath = Join-Path $runDirectory 'summary.json'
+        if (Test-Path -LiteralPath $summaryPath) {
+            $summary = Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json
+            $summary.status = 'FAIL'
+            $summary | Add-Member -NotePropertyName error -NotePropertyValue $_.Exception.Message -Force
+            Write-JsonFile $summary $summaryPath
+        }
+        throw
+    } finally {
+        Stop-RecordedProcesses $runDirectory
+        Remove-Item -LiteralPath (Join-Path $script:RuntimeRoot 'active-run.txt') -Force -ErrorAction SilentlyContinue
+    }
+}
+
 switch ($Command) {
     'doctor' { exit (Invoke-Doctor) }
     'setup' { Invoke-Setup }
@@ -679,6 +745,7 @@ switch ($Command) {
     'run' { Assert-QualificationCapabilities; $run = Start-Environment $false -NoMissionPlanner:$NoMissionPlanner -StartRos2:$WithRos2; Write-Host "Environment is running. Evidence: $run" -ForegroundColor Green }
     'test' { Assert-QualificationCapabilities; Invoke-SmokeTest }
     'ros-test' { Invoke-RosTopicTest }
+    'vins-test' { Invoke-VinsRuntimeTest }
     'camera-test' {
         Write-Step 'Qualifying raw-RGB camera profiles: 640x480 >= 20 FPS, 1280x720 >= 10 FPS (Mission Planner is not started)'
         & (Join-Path $PSScriptRoot 'camera-benchmark.ps1') -Width 640 -Height 480 -DurationSeconds 20 -MinRawFps 20 -Environment $Environment -RenderProfile $RenderProfile -Preview:$Preview

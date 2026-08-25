@@ -1,0 +1,50 @@
+/**:
+  ros__parameters:
+    use_sim_time: true
+    startup_px4_usb_quirk: false
+    system_id: 255
+    component_id: 191
+    target_system_id: 1
+    target_component_id: 1
+
+/**/sys:
+  ros__parameters:
+    conn_timeout: 10.0
+    disable_diag: false
+    heartbeat_rate: 1.0
+    heartbeat_mav_type: "ONBOARD_CONTROLLER"
+
+/**/time:
+  ros__parameters:
+    time_ref_source: "fcu"
+    timesync_mode: "NONE"
+    timesync_avg_alpha: 0.6
+    timesync_rate: 0.0
+    system_time_rate: 0.0
+
+/**/imu:
+  ros__parameters:
+    frame_id: "base_link"
+    linear_acceleration_stdev: 0.0003
+    angular_velocity_stdev: 0.0003490659
+    orientation_stdev: 1.0
+    magnetic_stdev: 0.0
+
+/**/local_position:
+  ros__parameters:
+    frame_id: "odom"
+    tf.send: false
+    tf.frame_id: "odom"
+    tf.child_frame_id: "base_link"
+    tf.send_fcu: false
+
+/**/odometry:
+  ros__parameters:
+    fcu.odom_parent_id_des: "odom"
+    fcu.odom_child_id_des: "base_link"
+    fcu.map_id_des: "map"
+
+/**/mission:
+  ros__parameters:
+    pull_after_gcs: true
+    use_mission_item_int: true
