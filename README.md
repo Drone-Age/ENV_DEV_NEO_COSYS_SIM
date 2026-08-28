@@ -35,6 +35,20 @@ For the initial SIM2-compatible ROS 2 Jazzy sensor contract, without Mission Pla
 .\dev.ps1 test -WithRos2
 ```
 
+Normal VINS runs use the officially installed IVINS DEV package matrix. Source
+overlays remain available only as an explicit component-development fallback:
+
+```powershell
+.\dev.ps1 ivins -IvinsCommand doctor
+.\dev.ps1 vins-test -IvinsRuntime installed
+# development fallback only
+.\dev.ps1 vins-test -IvinsRuntime source
+```
+
+Official enrollment and the stage-automatically/apply-manually update flow are
+documented in [docs/IVINS_DEV.md](docs/IVINS_DEV.md). Enrollment secrets are
+never accepted as command-line values or written to a NewSIM evidence bundle.
+
 `ros-test` verifies `/clock`, ground-truth odometry, body/camera IMU, raw RGB and camera calibration using strict simulation timestamps, expected frames and wall-clock delivery-rate floors. `vins-test` then exercises the production iHUB UART sweep, moving CameraImu, VINS initializer, feature tracking and ExternalNav READY without Mission Planner. The flight variant proves that the base bridge does not regress heartbeat, EKF, ARM, route, LAND or DISARM.
 
 ## Environment packages

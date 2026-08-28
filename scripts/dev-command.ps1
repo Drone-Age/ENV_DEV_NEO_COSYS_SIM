@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'vins-test', 'stop', 'logs', 'env', 'capabilities')][string]$Command,
+    [Parameter(Mandatory)][ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'vins-test', 'ivins', 'stop', 'logs', 'env', 'capabilities')][string]$Command,
     [ValidateSet('list', 'doctor', 'build-map', 'import-assets')][string]$EnvironmentCommand = 'list',
     [string]$Environment = 'blocks',
     [ValidateSet('qualification', 'visual')][string]$RenderProfile = 'qualification',
@@ -22,7 +22,11 @@ param(
     [string]$VinsConfigFile = '',
     [string]$Distro = 'Ubuntu',
     [switch]$WithRos2,
-    [switch]$WithMissionPlanner
+    [switch]$WithMissionPlanner,
+    [ValidateSet('installed', 'source')][string]$IvinsRuntime = 'installed',
+    [ValidateSet('doctor', 'status', 'enroll', 'sync', 'update-check', 'update-status', 'update-install')][string]$IvinsCommand = 'status',
+    [string]$IvinsEnrollmentKeyFile = '',
+    [string]$IvinsVersion = ''
 )
 
 . (Join-Path $PSScriptRoot 'common.ps1')
@@ -34,6 +38,72 @@ function Test-PortFree([int]$Port) {
     $tcp = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
     $udp = Get-NetUDPEndpoint -LocalPort $Port -ErrorAction SilentlyContinue
     return -not ($tcp -or $udp)
+}
+
+function Invoke-IvinsWsl([string]$WslCommand, [string]$Operation) {
+    $result = Invoke-Wsl -Command $WslCommand -AllowFailure
+    $result.Output | ForEach-Object { Write-Host $_ }
+    if ($result.ExitCode -ne 0) {
+        throw "IVINS $Operation failed with exit code $($result.ExitCode)."
+    }
+}
+
+function Assert-IvinsInstalledRuntime {
+    $command = @'
+set -e
+test "$(dpkg --print-architecture)" = amd64
+. /etc/os-release
+test "$ID" = ubuntu
+test "$VERSION_ID" = 24.04
+test "$(cat /etc/ivins/newsim-platform)" = newsim-cosys
+grep -Eq '^[A-Za-z0-9._-]{8,128}$' /etc/ivins/newsim-instance-id
+test "$(stat -c '%U:%G:%a' /etc/ivins/newsim-platform)" = root:root:444
+test "$(stat -c '%U:%G:%a' /etc/ivins/newsim-instance-id)" = root:root:444
+test -x /usr/sbin/ivins-installer
+test -r /opt/iros2j/setup.bash
+test -r /opt/imavros/setup.bash
+test -r /opt/vins/setup.bash
+test -r /opt/vio_stack/current/local_setup.bash
+dpkg-query -W -f='${Package}=${Version} ${Architecture} ${db:Status-Status}\n' \
+  ivins ivins-installer-agent iros2j-ros-core imavros vins-mono-ros2 vio-stack
+'@
+    Invoke-IvinsWsl $command 'installed-runtime check'
+}
+
+function Invoke-IvinsManagement {
+    switch ($IvinsCommand) {
+        'doctor' {
+            Assert-IvinsInstalledRuntime
+            Invoke-IvinsWsl '/usr/sbin/ivins-installer --version' 'version check'
+            Write-Pass 'IVINS DEV runtime' 'official Noble AMD64 packages are installed'
+        }
+        'status' {
+            Invoke-IvinsWsl 'sudo -n /usr/sbin/ivins-installer status' 'status'
+        }
+        'enroll' {
+            if ($IvinsEnrollmentKeyFile -notmatch '^/[A-Za-z0-9._/-]+$') {
+                throw 'Provide -IvinsEnrollmentKeyFile as an absolute WSL path containing only letters, digits, dot, underscore, slash or hyphen.'
+            }
+            $keyPath = $IvinsEnrollmentKeyFile
+            $command = "sudo -n test -f '$keyPath' && sudo -n /usr/sbin/ivins-installer enroll --server https://ivins.drone-age.org --key-file '$keyPath'"
+            Invoke-IvinsWsl $command 'official DEV enrollment'
+        }
+        'sync' {
+            Invoke-IvinsWsl 'sudo -n systemctl start ivins-update-agent.service && sudo -n /usr/sbin/ivins-installer status' 'automatic stage synchronization'
+        }
+        'update-check' {
+            Invoke-IvinsWsl 'sudo -n /usr/bin/ibootctl update check' 'update check'
+        }
+        'update-status' {
+            Invoke-IvinsWsl 'sudo -n /usr/bin/ibootctl update status' 'update status'
+        }
+        'update-install' {
+            if ($IvinsVersion -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+                throw 'Provide the exact four-component product version with -IvinsVersion.'
+            }
+            Invoke-IvinsWsl "sudo -n /usr/bin/ibootctl update install '$IvinsVersion'" 'locally approved update installation'
+        }
+    }
 }
 
 function Set-LfLineEnding([string[]]$Paths) {
@@ -237,7 +307,8 @@ function Get-BackendCapabilities {
             run = @('-Environment', '-RenderProfile', '-Headless', '-NoMissionPlanner', '-WithRos2', '-Preview')
             test = @('-Environment', '-RenderProfile', '-WithRos2', '-Preview')
             ros_test = @('-Environment', '-RenderProfile', '-Preview')
-            qualification_accepted_args = @('-RunId', '-FlightLogDirectory', '-Rosbag', '-FlightQualification', '-FlightQualificationLimitM', '-FlightQualificationProfile', '-FlightQualificationNoWind', '-FlightQualificationNoVisualUi', '-RouteQualification', '-RouteQualificationProfile', '-VinsConfigFile', '-Distro', '-WithRos2', '-WithMissionPlanner')
+            qualification_accepted_args = @('-RunId', '-FlightLogDirectory', '-Rosbag', '-FlightQualification', '-FlightQualificationLimitM', '-FlightQualificationProfile', '-FlightQualificationNoWind', '-FlightQualificationNoVisualUi', '-RouteQualification', '-RouteQualificationProfile', '-VinsConfigFile', '-Distro', '-WithRos2', '-WithMissionPlanner', '-IvinsRuntime')
+            ivins = @('-IvinsCommand', '-IvinsEnrollmentKeyFile', '-IvinsVersion')
         }
     }
 }
@@ -334,6 +405,12 @@ function Invoke-Setup {
     Write-Step "Preparing isolated WSL distribution '$($script:Lock.platform.wsl_distribution)'"
     & (Join-Path $PSScriptRoot 'setup-wsl-distro.ps1') -RepoRoot $script:RepoRoot -DistroName $script:Lock.platform.wsl_distribution
     if ($LASTEXITCODE -ne 0) { throw 'Isolated Ubuntu 24.04 WSL setup failed.' }
+
+    Write-Step 'Provisioning stable NewSIM IVINS identity'
+    $ivinsIdentitySetup = Convert-ToWslPath (Join-Path $PSScriptRoot 'wsl\setup_ivins_newsim_identity.sh')
+    & wsl.exe -d $script:Lock.platform.wsl_distribution -u root -- bash $ivinsIdentitySetup
+    if ($LASTEXITCODE -ne 0) { throw 'Stable NewSIM IVINS identity setup failed.' }
+    Write-Pass 'NewSIM IVINS identity' 'root-owned platform and instance markers ready'
 
     Write-Step 'Initialising pinned submodules'
     $componentPaths = @($script:Lock.submodules.psobject.Properties | ForEach-Object { $_.Name })
@@ -479,11 +556,17 @@ function Invoke-Build {
     $ardupilot = Convert-ToWslPath (Join-Path $script:RepoRoot 'third_party\ardupilot')
     Invoke-Wsl -Command "cd '$ardupilot' && source ~/venv-ardupilot/bin/activate && ./waf configure --board sitl && ./waf copter" | Out-Null
 
-    Write-Step 'Building the pinned ROS 2 VINS/iMAVROS/vio_stack overlay'
+    if ($IvinsRuntime -eq 'installed') {
+        Write-Step 'Verifying the official installed IVINS DEV runtime'
+        Assert-IvinsInstalledRuntime
+        Write-Step 'Building only the NewSIM adapter overlay against installed IVINS packages'
+    } else {
+        Write-Step 'Building the pinned ROS 2 VINS/iMAVROS/vio_stack source overlay'
+    }
     $repoWsl = Convert-ToWslPath $script:RepoRoot
     $vinsBuilder = Convert-ToWslPath (Join-Path $PSScriptRoot 'wsl\build_vins_overlay.sh')
-    Invoke-Wsl -Command "bash '$vinsBuilder' '$repoWsl' ~/.local/share/indra-cosys" | Out-Null
-    Write-Pass 'Build' 'Cosys-AirSim, IndraCosysDemoEditor, ArduCopter SITL and pinned VINS overlay'
+    Invoke-Wsl -Command "bash '$vinsBuilder' '$repoWsl' ~/.local/share/indra-cosys '$IvinsRuntime'" | Out-Null
+    Write-Pass 'Build' "Cosys-AirSim, IndraCosysDemoEditor, ArduCopter SITL and IVINS runtime mode '$IvinsRuntime'"
 }
 
 function Start-RosBridge([string]$RunDirectory, [object]$Settings) {
@@ -534,12 +617,12 @@ function Start-VinsStack([string]$RunDirectory, [object]$Settings) {
     $runWsl = Convert-ToWslPath $RunDirectory
     $launcher = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\start_vins_stack.sh')
     $domainId = [int]$script:Config.future_ros_domain_id
-    $command = "bash '$launcher' '$repoWsl' '$runWsl' '$($Settings.Network.WindowsIp)' '$($script:Config.ports.cosys_rpc_tcp)' '$($script:Config.ports.mavlink_tcp)' '$domainId' '900'"
+    $command = "bash '$launcher' '$repoWsl' '$runWsl' '$($Settings.Network.WindowsIp)' '$($script:Config.ports.cosys_rpc_tcp)' '$($script:Config.ports.mavlink_tcp)' '$domainId' '900' '$IvinsRuntime'"
     $result = Invoke-Wsl -Command $command -AllowFailure
     if ($result.ExitCode -ne 0) { throw "Unable to launch VINS stack: $($result.Output -join ' ')" }
     $check = Invoke-Wsl -Command "test -s '$runWsl/vins/wsl.pid' && kill -0 `$(cat '$runWsl/vins/wsl.pid')" -AllowFailure
     if ($check.ExitCode -ne 0) { throw "VINS stack exited during startup; see $RunDirectory\vins\stack.log" }
-    Write-Pass 'VINS stack' "pinned overlay launched in ROS domain $domainId"
+    Write-Pass 'VINS stack' "IVINS runtime mode '$IvinsRuntime' launched in ROS domain $domainId"
 }
 
 function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$StartRos2, [switch]$StartVins) {
@@ -554,7 +637,8 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
         $plugin = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Plugins\AirSim\AirSim.uplugin'
         $editorDll = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Binaries\Win64\UnrealEditor-IndraCosysDemo.dll'
         $sitl = Join-Path $script:RepoRoot 'third_party\ardupilot\build\sitl\bin\arducopter'
-        $vinsOverlayCheck = Invoke-Wsl -Command "test -f ~/.local/share/indra-cosys/vins-overlay-jazzy/install/setup.bash" -AllowFailure
+        $overlayName = if ($IvinsRuntime -eq 'installed') { 'ivins-adapter-overlay-jazzy' } else { 'vins-overlay-jazzy' }
+        $vinsOverlayCheck = Invoke-Wsl -Command "test -f ~/.local/share/indra-cosys/$overlayName/install/setup.bash" -AllowFailure
         $vinsBuildMissing = $StartVins -and $vinsOverlayCheck.ExitCode -ne 0
         if (-not (Test-Path -LiteralPath $plugin) -or -not (Test-Path -LiteralPath $editorDll) -or -not (Test-Path -LiteralPath $sitl) -or $vinsBuildMissing) { Invoke-Build }
     }
@@ -681,7 +765,11 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
         environment = [ordered]@{ id = $environmentManifest.id; version = $environmentManifest.version; readiness = $environmentManifest.readiness; preview_authorized = [bool]$Preview; map = $environmentManifest.map_path; render_profile = $RenderProfile; runtime_gate = $environmentRuntimeGate }
         endpoints = $script:Config.ports; network = $settings.Network
         ros2 = [ordered]@{ enabled = [bool]$StartRos2; domain_id = [int]$script:Config.future_ros_domain_id }
-        vins = [ordered]@{ enabled = [bool]$StartVins; overlay = '~/.local/share/indra-cosys/vins-overlay-jazzy/install/setup.bash' }
+        vins = [ordered]@{
+            enabled = [bool]$StartVins
+            runtime_mode = $IvinsRuntime
+            overlay = $(if ($IvinsRuntime -eq 'installed') { '~/.local/share/indra-cosys/ivins-adapter-overlay-jazzy/install/setup.bash' } else { '~/.local/share/indra-cosys/vins-overlay-jazzy/install/setup.bash' })
+        }
     }
     Write-JsonFile $metadata (Join-Path $runDirectory 'summary.json')
     return $runDirectory
@@ -856,6 +944,7 @@ switch ($Command) {
     'test' { Assert-QualificationCapabilities; Invoke-SmokeTest }
     'ros-test' { Invoke-RosTopicTest }
     'vins-test' { Invoke-VinsRuntimeTest }
+    'ivins' { Invoke-IvinsManagement }
     'camera-test' {
         Write-Step 'Qualifying raw-RGB camera profiles: 640x480 >= 20 FPS, 1280x720 >= 10 FPS (Mission Planner is not started)'
         & (Join-Path $PSScriptRoot 'camera-benchmark.ps1') -Width 640 -Height 480 -DurationSeconds 20 -MinRawFps 20 -Environment $Environment -RenderProfile $RenderProfile -Preview:$Preview
