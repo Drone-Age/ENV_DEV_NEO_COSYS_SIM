@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'vins-test', 'wind-test', 'iros-test', 'stop', 'logs', 'env', 'capabilities')]
+    [ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'vins-test', 'wind-test', 'iros-test', 'ivins', 'stop', 'logs', 'env', 'capabilities')]
     [string]$Command = 'doctor',
     [Parameter(Position = 1)]
     [ValidateSet('list', 'doctor', 'build-map', 'import-assets')]
@@ -28,7 +28,13 @@ param(
     [string]$VinsConfigFile = '',
     [string]$Distro = 'Ubuntu',
     [switch]$WithRos2,
-    [switch]$WithMissionPlanner
+    [switch]$WithMissionPlanner,
+    [ValidateSet('installed', 'source')]
+    [string]$IvinsRuntime = 'installed',
+    [ValidateSet('doctor', 'status', 'enroll', 'sync', 'update-check', 'update-status', 'update-install')]
+    [string]$IvinsCommand = 'status',
+    [string]$IvinsEnrollmentKeyFile = '',
+    [string]$IvinsVersion = ''
 )
 
 $ErrorActionPreference = 'Stop'

@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-    echo "usage: build_vins_overlay.sh <repo-root> <runtime-root>" >&2
+if [[ $# -ne 3 ]]; then
+    echo "usage: build_vins_overlay.sh <repo-root> <runtime-root> <installed|source>" >&2
     exit 64
 fi
 
 repo_root=$1
 runtime_root=$2
-overlay_root="$runtime_root/vins-overlay-jazzy"
+runtime_mode=$3
+case "$runtime_mode" in
+    installed) overlay_root="$runtime_root/ivins-adapter-overlay-jazzy" ;;
+    source) overlay_root="$runtime_root/vins-overlay-jazzy" ;;
+    *) echo "invalid IVINS runtime mode: $runtime_mode" >&2; exit 64 ;;
+esac
 
 if [[ -f /opt/iros2j/setup.bash ]]; then
     set +u
@@ -27,15 +32,7 @@ command -v colcon >/dev/null
 mkdir -p "$overlay_root/build" "$overlay_root/install" "$overlay_root/log"
 export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
 
-packages=(
-    mavros mavros_extras
-    feature_tracker vins_estimator
-    ihub vins_initializer vision_bridge vins_sim_bringup
-)
-
-if [[ -f /opt/imavros/setup.bash \
-    && -f /opt/vins/setup.bash \
-    && -f /opt/vio_stack/current/local_setup.bash ]]; then
+if [[ "$runtime_mode" == installed ]]; then
     # NewSIM release qualification must exercise the exact installed product
     # binaries. Build only the simulator adapter as an overlay on that matrix.
     set +u
@@ -44,18 +41,26 @@ if [[ -f /opt/imavros/setup.bash \
     source /opt/vio_stack/current/local_setup.bash
     set -u
     base_paths=("$repo_root/ros_ws/src")
-    build_packages=(vins_sim_bringup)
+    packages=(vins_sim_bringup)
+    override_arguments=()
     build_ihub_sim_bridge=true
 else
     base_paths=(
         "$repo_root/third_party/iMAVROS"
         "$repo_root/third_party/VINS-NEO"
         "$repo_root/third_party/vio_stack/src"
+        "$repo_root/ros_ws/src"
     )
-    if [[ -d "$repo_root/ros_ws/src" ]]; then
-        base_paths+=("$repo_root/ros_ws/src")
-    fi
-    build_packages=("${packages[@]}")
+    packages=(
+        mavros mavros_extras
+        feature_tracker vins_estimator
+        ihub vins_initializer vision_bridge vins_sim_bringup
+    )
+    override_arguments=(
+        --allow-overriding
+        libmavconn mavros_msgs mavros mavros_extras
+        vio_stack_interfaces ihub vins_initializer vision_bridge
+    )
     build_ihub_sim_bridge=false
 fi
 
@@ -64,10 +69,8 @@ colcon --log-base "$overlay_root/log" build \
     --build-base "$overlay_root/build" \
     --install-base "$overlay_root/install" \
     --merge-install --symlink-install \
-    --packages-up-to "${build_packages[@]}" \
-    --allow-overriding \
-        libmavconn mavros_msgs mavros mavros_extras \
-        vio_stack_interfaces ihub vins_initializer vision_bridge \
+    --packages-up-to "${packages[@]}" \
+    "${override_arguments[@]}" \
     --executor sequential \
     --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
@@ -95,4 +98,4 @@ for package_name in "${packages[@]}"; do
 done
 
 printf '%s\n' "$overlay_root/install/setup.bash" >"$overlay_root/setup-path.txt"
-echo "VINS_OVERLAY_BUILD_PASS $overlay_root/install"
+echo "VINS_OVERLAY_BUILD_PASS mode=$runtime_mode $overlay_root/install"

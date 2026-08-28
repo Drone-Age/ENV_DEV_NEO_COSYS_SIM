@@ -1,5 +1,10 @@
 # Deployment on a new Windows workstation
 
+For the signed IVINS DEV package matrix, official server enrollment and
+stage-automatically/apply-manually update flow, also follow
+[IVINS_DEV.md](IVINS_DEV.md). The normal VINS qualification path uses
+`-IvinsRuntime installed`; source mode is development evidence only.
+
 This runbook deploys the v0.1 flight demo without using any files from `ENV_DEV_NEO_SIM2` or an old Microsoft AirSim installation. The target result is a visible Cosys Blocks flight, ArduCopter SITL telemetry in Mission Planner, and a PASS evidence bundle for `TAKEOFF -> 15 x 15 m square -> LAND`.
 
 ## 1. Host requirements

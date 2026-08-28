@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 9 ]]; then
-    echo "usage: start_vins_stack.sh <repo-root> <run-dir> <host> <rpc-port> <mavlink-port> <wind-mavlink-port> <domain-id> <timeout-s> <enable-wind>" >&2
+if [[ $# -ne 10 ]]; then
+    echo "usage: start_vins_stack.sh <repo-root> <run-dir> <host> <rpc-port> <mavlink-port> <wind-mavlink-port> <domain-id> <timeout-s> <enable-wind> <installed|source>" >&2
     exit 64
 fi
 
@@ -15,12 +15,18 @@ wind_mavlink_port=$6
 domain_id=$7
 timeout_s=$8
 enable_wind=$9
+runtime_mode=${10}
 if [[ $enable_wind != true && $enable_wind != false ]]; then
     echo "enable-wind must be true or false" >&2
     exit 64
 fi
 vins_dir="$run_dir/vins"
-overlay_root="${INDRA_VINS_RUNTIME_ROOT:-$HOME/.local/share/indra-cosys}/vins-overlay-jazzy"
+runtime_root="${INDRA_VINS_RUNTIME_ROOT:-$HOME/.local/share/indra-cosys}"
+case "$runtime_mode" in
+    installed) overlay_root="$runtime_root/ivins-adapter-overlay-jazzy" ;;
+    source) overlay_root="$runtime_root/vins-overlay-jazzy" ;;
+    *) echo "invalid IVINS runtime mode: $runtime_mode" >&2; exit 64 ;;
+esac
 overlay="$overlay_root/install/setup.bash"
 mkdir -p "$vins_dir" /tmp/indra-cosys-ihub
 
@@ -35,6 +41,17 @@ elif [[ -f /opt/ros/jazzy/setup.bash ]]; then
 else
     echo "ROS 2 Jazzy setup was not found" >&2
     exit 66
+fi
+if [[ "$runtime_mode" == installed ]]; then
+    for setup in \
+        /opt/imavros/setup.bash \
+        /opt/vins/setup.bash \
+        /opt/vio_stack/current/local_setup.bash; do
+        [[ -r "$setup" ]] || { echo "official IVINS setup is missing: $setup" >&2; exit 67; }
+        set +u
+        source "$setup"
+        set -u
+    done
 fi
 if [[ ! -f $overlay ]]; then
     echo "Pinned VINS overlay was not built: $overlay" >&2
