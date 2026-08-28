@@ -191,12 +191,42 @@ def main() -> int:
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--min-raw-fps", type=float, default=0.0)
     parser.add_argument("--min-sustained-raw-fps", type=float, default=10.0)
+    parser.add_argument("--camera-pitch-deg", type=float, default=0.0)
+    parser.add_argument("--camera-height-m", type=float, default=0.0)
+    parser.add_argument("--camera-offset-x-m", type=float, default=0.0)
+    parser.add_argument("--camera-offset-y-m", type=float, default=0.0)
     parser.add_argument("--save-samples", action="store_true")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
     client = airsim.VehicleClient(ip=args.host, port=args.port, timeout_value=180)
     client.confirmConnection()
+    if not -90.0 <= args.camera_pitch_deg <= 90.0:
+        parser.error("--camera-pitch-deg must be within [-90, 90]")
+    if not 0.0 <= args.camera_height_m <= 500.0:
+        parser.error("--camera-height-m must be within [0, 500]")
+    if (
+        args.camera_pitch_deg != 0.0
+        or args.camera_height_m != 0.0
+        or args.camera_offset_x_m != 0.0
+        or args.camera_offset_y_m != 0.0
+    ):
+        # Diagnostic inspection pose only. The default qualification command
+        # remains the physical forward-facing vehicle camera.
+        client.simSetCameraPose(
+            args.camera,
+            airsim.Pose(
+                airsim.Vector3r(
+                    args.camera_offset_x_m,
+                    args.camera_offset_y_m,
+                    -args.camera_height_m,
+                ),
+                airsim.euler_to_quaternion(
+                    0.0, math.radians(args.camera_pitch_deg), 0.0
+                ),
+            ),
+            vehicle_name=args.vehicle,
+        )
     output = pathlib.Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     raw_sample = output.parent / "camera-sample-raw.ppm" if args.save_samples else None

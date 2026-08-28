@@ -6,13 +6,48 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import pathlib
+import select
+import socket
 import sys
 import time
 import traceback
 from datetime import datetime, timezone
 
 from pymavlink import mavutil
+
+
+def assert_process_alive(pid_file: str | None) -> None:
+    """Fail closed when the supervised ArduCopter process disappears."""
+    if not pid_file:
+        return
+    path = pathlib.Path(pid_file)
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+        if not raw.isdigit() or int(raw) <= 0:
+            raise ValueError("PID is not a positive integer")
+        os.kill(int(raw), 0)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"ArduCopter SITL is not alive ({path}): {exc}") from exc
+
+
+def recv_match_checked(master, **kwargs):
+    """Receive MAVLink without busy-spinning after the supervised peer dies."""
+    assert_process_alive(getattr(master, "_indra_sitl_pid_file", None))
+    port = getattr(master, "port", None)
+    if isinstance(port, socket.socket):
+        readable, _, _ = select.select([port], [], [], 0.0)
+        if readable and port.recv(1, socket.MSG_PEEK) == b"":
+            raise RuntimeError("ArduCopter MAVLink TCP socket closed")
+    message = master.recv_match(**kwargs)
+    if message is None:
+        assert_process_alive(getattr(master, "_indra_sitl_pid_file", None))
+        # pymavlink can return EOF immediately even for a blocking call.  A
+        # short backoff keeps a disconnected test from flooding its evidence
+        # bundle before the liveness check observes process termination.
+        time.sleep(0.02)
+    return message
 
 
 def utc_now() -> str:
@@ -26,10 +61,82 @@ def offset_lat_lon(lat: float, lon: float, north_m: float, east_m: float) -> tup
     return lat_out, lon_out
 
 
+def build_square_mission(
+    route_lat: float,
+    route_lon: float,
+    *,
+    takeoff_m: float,
+    side_m: float,
+    laps: int = 1,
+    altitude_step_m: float = 0.0,
+) -> list[dict]:
+    """Build a home-relative square mission with optional vertical excitation."""
+
+    if isinstance(laps, bool) or not isinstance(laps, int) or laps < 1:
+        raise ValueError("laps must be an integer >= 1")
+    altitude_step_m = float(altitude_step_m)
+    if not math.isfinite(altitude_step_m) or altitude_step_m < 0.0:
+        raise ValueError("altitude_step_m must be finite and >= 0")
+    offsets = [
+        (side_m, 0.0),
+        (side_m, side_m),
+        (0.0, side_m),
+        (0.0, 0.0),
+    ]
+    coordinates = [
+        offset_lat_lon(route_lat, route_lon, north, east)
+        for north, east in offsets
+    ]
+    # ArduPilot reserves mission sequence 0 for the home item. If TAKEOFF is
+    # uploaded as seq 0 it is accepted by the protocol but AUTO later reports
+    # "Missing Takeoff Cmd" because the item is not part of the flown mission.
+    mission = [
+        {
+            "command": mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
+            "lat": route_lat,
+            "lon": route_lon,
+            "rel_alt": 0.0,
+            "p1": 0.0,
+        },
+        {
+            "command": mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
+            "lat": route_lat,
+            "lon": route_lon,
+            "rel_alt": takeoff_m,
+            "p1": 0.0,
+        },
+    ]
+    for _ in range(laps):
+        mission.extend(
+            {
+                "command": mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
+                "lat": lat,
+                "lon": lon,
+                # Alternating height is opt-in and reserved for VINS
+                # qualification. It supplies real translational acceleration
+                # to the camera/IMU pair; the canonical v0.1 square remains
+                # exactly level when altitude_step_m is zero.
+                "rel_alt": takeoff_m + (altitude_step_m if index % 2 == 0 else 0.0),
+                "p1": 1.0,
+                "p2": 2.0,
+            }
+            for index, (lat, lon) in enumerate(coordinates)
+        )
+    mission.append(
+        {
+            "command": mavutil.mavlink.MAV_CMD_NAV_LAND,
+            "lat": route_lat,
+            "lon": route_lon,
+            "rel_alt": 0.0,
+        }
+    )
+    return mission
+
+
 def wait_message(master, types, deadline: float, condition=None):
     wanted = set(types if isinstance(types, (list, tuple, set)) else [types])
     while time.monotonic() < deadline:
-        msg = master.recv_match(type=list(wanted), blocking=True, timeout=min(1.0, max(0.0, deadline - time.monotonic())))
+        msg = recv_match_checked(master, type=list(wanted), blocking=True, timeout=min(1.0, max(0.0, deadline - time.monotonic())))
         if msg is not None and (condition is None or condition(msg)):
             return msg
     raise TimeoutError(f"timed out waiting for {sorted(wanted)}")
@@ -42,7 +149,7 @@ def send_command(master, command: int, params=None, timeout: float = 15.0):
     status_texts = []
     ack = None
     while time.monotonic() < deadline and ack is None:
-        message = master.recv_match(type=["COMMAND_ACK", "STATUSTEXT"], blocking=True, timeout=1.0)
+        message = recv_match_checked(master, type=["COMMAND_ACK", "STATUSTEXT"], blocking=True, timeout=1.0)
         if message is None:
             continue
         if message.get_type() == "STATUSTEXT":
@@ -55,7 +162,7 @@ def send_command(master, command: int, params=None, timeout: float = 15.0):
     if ack.result not in accepted:
         detail_deadline = time.monotonic() + 2.0
         while time.monotonic() < detail_deadline:
-            message = master.recv_match(type="STATUSTEXT", blocking=True, timeout=0.25)
+            message = recv_match_checked(master, type="STATUSTEXT", blocking=True, timeout=0.25)
             if message is not None:
                 status_texts.append(str(message.text))
         details = "; ".join(status_texts[-5:]) or "no STATUSTEXT received"
@@ -139,7 +246,7 @@ def collect_parameters(master, output_dir: pathlib.Path, seconds: float = 12.0) 
     params: dict[str, float] = {}
     expected = None
     while time.monotonic() < deadline:
-        msg = master.recv_match(type="PARAM_VALUE", blocking=True, timeout=0.5)
+        msg = recv_match_checked(master, type="PARAM_VALUE", blocking=True, timeout=0.5)
         if msg is None:
             continue
         name = msg.param_id
@@ -171,6 +278,8 @@ def run(args) -> dict:
         "disarmed": False,
     }
 
+    assert_process_alive(args.sitl_pid_file)
+
     def event(name: str, **details):
         record = {"time": utc_now(), "elapsed_s": round(time.monotonic() - started, 3), "event": name, **details}
         events.append(record)
@@ -181,6 +290,7 @@ def run(args) -> dict:
     while time.monotonic() < connection_deadline and master is None:
         try:
             master = mavutil.mavlink_connection(args.connect, source_system=250, autoreconnect=False)
+            master._indra_sitl_pid_file = args.sitl_pid_file
         except (ConnectionRefusedError, OSError):
             if master is not None:
                 try:
@@ -274,25 +384,39 @@ def run(args) -> dict:
     )
     event("prearm_revalidated", health=int(prearm.onboard_control_sensors_health))
 
-    side = args.side
-    offsets = [(0.0, 0.0), (side, 0.0), (side, side), (0.0, side), (0.0, 0.0)]
-    coordinates = [offset_lat_lon(args.lat, args.lon, north, east) for north, east in offsets]
-    # ArduPilot reserves mission sequence 0 for the home item. If TAKEOFF is
-    # uploaded as seq 0 it is accepted by the protocol but AUTO later reports
-    # "Missing Takeoff Cmd" because the item is not part of the flown mission.
-    mission = [
-        {"command": mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, "lat": args.lat, "lon": args.lon, "rel_alt": 0.0, "p1": 0.0},
-        {"command": mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, "lat": args.lat, "lon": args.lon, "rel_alt": args.takeoff, "p1": 0.0},
-    ]
-    mission.extend(
-        {"command": mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, "lat": lat, "lon": lon, "rel_alt": args.takeoff, "p1": 1.0, "p2": 2.0}
-        for lat, lon in coordinates[1:]
+    # The profile origin georeferences the Unreal world; it is not necessarily
+    # the vehicle's PlayerStart.  Build local qualification routes around the
+    # HOME_POSITION reported by ArduPilot so TAKEOFF and LAND use the same flat
+    # patch of terrain.  Using the profile origin here can silently move LAND
+    # tens of metres away from the actual launch point in another UE map.
+    route_lat = int(home.latitude) / 1.0e7
+    route_lon = int(home.longitude) / 1.0e7
+    event(
+        "mission_origin",
+        source="HOME_POSITION",
+        latitude=route_lat,
+        longitude=route_lon,
+        profile_latitude=args.lat,
+        profile_longitude=args.lon,
     )
-    mission.append({"command": mavutil.mavlink.MAV_CMD_NAV_LAND, "lat": args.lat, "lon": args.lon, "rel_alt": 0.0})
+
+    mission = build_square_mission(
+        route_lat,
+        route_lon,
+        takeoff_m=args.takeoff,
+        side_m=args.side,
+        laps=args.laps,
+        altitude_step_m=args.altitude_step,
+    )
     required_reached = set(range(1, len(mission) - 1))
     (output_path.parent / "mission.json").write_text(json.dumps(mission, indent=2), encoding="utf-8")
     upload_mission(master, mission)
-    event("mission_uploaded", items=len(mission))
+    event(
+        "mission_uploaded",
+        items=len(mission),
+        laps=args.laps,
+        altitude_step_m=args.altitude_step,
+    )
 
     _, prearm_messages = send_command(master, mavutil.mavlink.MAV_CMD_RUN_PREARM_CHECKS)
     event("prearm_checks", messages=prearm_messages)
@@ -354,7 +478,7 @@ def run(args) -> dict:
     max_alt_m = 0.0
     last_position_time = time.monotonic()
     while time.monotonic() < deadline:
-        msg = master.recv_match(type=["MISSION_ITEM_REACHED", "GLOBAL_POSITION_INT", "HEARTBEAT", "STATUSTEXT"], blocking=True, timeout=1.0)
+        msg = recv_match_checked(master, type=["MISSION_ITEM_REACHED", "GLOBAL_POSITION_INT", "HEARTBEAT", "STATUSTEXT"], blocking=True, timeout=1.0)
         if msg is None:
             if time.monotonic() - last_position_time > 10:
                 raise TimeoutError("telemetry position stream stalled")
@@ -399,11 +523,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--connect", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--sitl-pid-file")
     parser.add_argument("--lat", type=float, required=True)
     parser.add_argument("--lon", type=float, required=True)
     parser.add_argument("--alt", type=float, required=True)
     parser.add_argument("--takeoff", type=float, default=5.0)
     parser.add_argument("--side", type=float, default=15.0)
+    parser.add_argument("--laps", type=int, default=1)
+    parser.add_argument("--altitude-step", type=float, default=0.0)
     parser.add_argument("--timeout", type=int, default=240)
     args = parser.parse_args()
     output = pathlib.Path(args.output)

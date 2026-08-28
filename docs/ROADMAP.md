@@ -23,7 +23,11 @@ Gate: repeat the Blocks smoke after every launcher, Cosys or sensor-path change.
 - [done] Sustain 640 x 480 raw RGB at 20.74 unique FPS with zero duplicate timestamps (`2026-08-24_205010_camera-sim2-rural-640x480_42cfbbd9`).
 - [done] Repartition the generated Landscape into 256 runtime streaming proxies, verify 1024 collision components, remove the temporary pad, hit DEM collision at 150 m and 500 m, and pass the complete square flight directly on the DEM (`2026-08-24_214945_test_50550629`).
 - [done] Replace the 15.33 FPS synchronous rural path with the fixed-rate asynchronous producer. The qualified 20-second runs now reach 20.50 FPS at 640 x 480 and 20.49 FPS at 1280 x 720, with zero duplicate timestamps and non-uniform pixel content.
-- Add georeferencing, landscape material, roads/land-use masks, performant grass, several tree variants, sunflower/corn field representation, HLOD and collision checks.
+- [done] Replace primitive crop stalks with provenance-pinned CC0 corn/wheat HISM layers on the two real OSM field polygons. The balanced v3 composition contains 11,025 corn and 118,335 wheat instances; fail-closed lower/upper bounds protect both readability and the 1280 x 720 camera budget.
+- [done] Derive and immutably publish the full-core ESA WorldCover 2021 v200 class-40 mask; verified real cropland coverage is 88.830584% with pinned source and derived hashes.
+- [done] Apply the broad cropland mask as a low-cost Landscape distance-material layer over the Sentinel-2 underlay, with a fail-closed 4096 linear mask/material verifier.
+- [done] Requalify the integrated field layer: 640 x 480 reaches 29.52 FPS (29.0 worst 2 s), 1280 x 720 reaches 29.17 FPS (28.5 worst 2 s), and the no-Mission-Planner square flight `2026-08-28_202313_test_5e034038` lands/disarms after 1284/1284 terrain hits.
+- Extend partitioned near-camera HISM/PCG beyond the two OSM polygons, then add several tree variants, a redistribution-safe sunflower representation, HLOD and remaining collision/landing checks.
 - Keep `qualification` offline and reproducible. Keep `visual` separately configurable.
 - Attach `cesium-global` outside the local qualification polygon for effectively unbounded streamed WGS84/ECEF exploration. The local core remains authoritative for flight physics and test collision; Cesium is not treated as an infinite deterministic physics mesh.
 - Pass the existing 15 m square in Blocks and SIM2 Rural with equivalent vehicle behaviour and at least 20 unique 640 x 480 camera frames/s.

@@ -16,6 +16,9 @@ unreal/**/Saved/
 unreal/**/.vs/
 unreal/**/Plugins/AirSim/
 unreal/**/Plugins/Environments/
+unreal/**/Plugins/External/
+unreal/**/Content/CesiumSettings/
+unreal/**/cesium-request-cache.sqlite*
 *.sln
 *.VC.db
 *.opensdf

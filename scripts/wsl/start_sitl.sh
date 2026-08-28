@@ -23,6 +23,13 @@ source "$HOME/venv-ardupilot/bin/activate"
 cd "$run_dir/sitl"
 supervisor="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sitl_supervisor.sh"
 
+# AP_HAL_SITL uses a fixed 60-byte buffer while locating dumpstack/dumpcore.
+# The repository path can exceed it, so expose the pinned helpers through a
+# deterministic short symlink. Crash output still lands in this run directory.
+diagnostic_link="/tmp/indra-ap-scripts"
+ln -sfn "$ardupilot/Tools/scripts" "$diagnostic_link"
+export AP_SCRIPTS_DIR_PATH="$diagnostic_link"
+
 nohup setsid "$supervisor" "$ardupilot/build/sitl/bin/arducopter" \
     -w \
     --model airsim-copter \

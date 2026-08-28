@@ -35,6 +35,39 @@
         "descriptor": { "type": ["string", "null"] }
       }
     },
+    "map_build": {
+      "type": "object",
+      "properties": {
+        "field_crops": {
+          "type": "object",
+          "required": ["source", "authoritative_cropland_mask", "assignment_seed", "sowing_strategy", "minimum_instances", "maximum_instances"],
+          "properties": {
+            "source": { "type": "string", "minLength": 1 },
+            "authoritative_cropland_mask": {
+              "type": "string",
+              "pattern": "^(?![A-Za-z]:)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$))[^/\\\\].*"
+            },
+            "assignment_seed": { "type": "integer" },
+            "sowing_strategy": {
+              "type": "object",
+              "required": ["parcel_assignment", "baseline_crops", "optional_crops", "exclude", "near", "mid", "far"],
+              "properties": {
+                "parcel_assignment": { "const": "stable-per-field" },
+                "baseline_crops": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "uniqueItems": true },
+                "optional_crops": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+                "exclude": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "uniqueItems": true },
+                "near": { "type": "string", "minLength": 1 },
+                "mid": { "type": "string", "minLength": 1 },
+                "far": { "type": "string", "minLength": 1 }
+              },
+              "additionalProperties": false
+            },
+            "minimum_instances": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 } },
+            "maximum_instances": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 } }
+          }
+        }
+      }
+    },
     "required_plugins": {
       "type": "array",
       "items": {
@@ -44,6 +77,42 @@
           "path": { "type": "string" },
           "descriptor": { "type": "string" }
         }
+      }
+    },
+    "asset_receipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "status"],
+        "properties": {
+          "path": { "type": "string", "pattern": "^(?![A-Za-z]:)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$))[^/\\\\].*\\.json$" },
+          "status": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "asset_provenance": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(?![A-Za-z]:)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$))[^/\\\\].*\\.json$"
+      }
+    },
+    "external_plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "version", "engine_version", "archive", "url", "sha256", "descriptor"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+          "version": { "type": "string" },
+          "engine_version": { "type": "string" },
+          "archive": { "type": "string", "pattern": "^[^/\\\\]+\\.zip$" },
+          "url": { "type": "string", "pattern": "^https://" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+          "descriptor": { "type": "string", "pattern": "^[^/\\\\]+\\.uplugin$" }
+        },
+        "additionalProperties": false
       }
     },
     "profiles": { "type": "object", "required": ["qualification", "visual"] },

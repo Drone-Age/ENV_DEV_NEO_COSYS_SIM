@@ -15,7 +15,13 @@ param(
     [switch]$DisableAsyncCamera,
     [switch]$DisableNamedImus,
     [switch]$SaveSamples,
-    [switch]$WindowsClient
+    [switch]$WindowsClient,
+    [ValidateRange(-90, 90)][double]$CameraPitchDegrees = 0,
+    [ValidateRange(0, 500)][double]$CameraHeightMeters = 0,
+    [ValidateRange(-2000, 2000)][double]$CameraOffsetXMetres = 0,
+    [ValidateRange(-2000, 2000)][double]$CameraOffsetYMetres = 0,
+    [ValidateRange(-2000, 2000)][double]$VehicleSpawnXMetres = 0,
+    [ValidateRange(-2000, 2000)][double]$VehicleSpawnYMetres = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,11 +42,24 @@ try {
     if ($DisableNamedImus) {
         $settings.Vehicles.Copter.PSObject.Properties.Remove('Sensors')
     }
+    if ($VehicleSpawnXMetres -ne 0 -or $VehicleSpawnYMetres -ne 0) {
+        $settings.Vehicles.Copter | Add-Member -NotePropertyName X -NotePropertyValue $VehicleSpawnXMetres -Force
+        $settings.Vehicles.Copter | Add-Member -NotePropertyName Y -NotePropertyValue $VehicleSpawnYMetres -Force
+        Write-Warn 'Diagnostic vehicle spawn' "X=$VehicleSpawnXMetres m, Y=$VehicleSpawnYMetres m; this does not alter the qualification profile"
+    }
     $capture = [pscustomobject]@{
         ImageType = 0
         Width = $Width
         Height = $Height
         FOV_Degrees = 90
+        AutoExposureMethod = 2
+        AutoExposureApplyPhysicalCameraExposure = $true
+        AutoExposureBias = 0
+        CameraISO = 100
+        CameraShutterSpeed = 500
+        CameraAperture = 11
+        MotionBlurAmount = 0
+        BloomIntensity = 0
         LumenGIEnable = $false
         LumenReflectionEnable = $false
         ForceUpdate = [bool]$ForceUpdate
@@ -62,7 +81,13 @@ try {
         "-abslog=$ueLog", "-settings=$($settingsInfo.Path)",
         "-IndraRenderProfile=$RenderProfile", "-IndraEnvironment=$($environmentManifest.id)"
     )
-    if (-not $DisableAsyncCamera) {
+    $cameraPoseRequested = $CameraPitchDegrees -ne 0 -or $CameraHeightMeters -ne 0 -or
+        $CameraOffsetXMetres -ne 0 -or $CameraOffsetYMetres -ne 0
+    $useAsyncCamera = -not $DisableAsyncCamera -and -not $cameraPoseRequested
+    if ($cameraPoseRequested) {
+        Write-Warn 'Inspection camera pose' 'using synchronous capture so simSetCameraPose cannot race the asynchronous producer'
+    }
+    if ($useAsyncCamera) {
         $arguments += @(
             '-IndraAsyncCamera', '-IndraCameraName=0',
             "-IndraCameraHz=$([double]$sensorProfile.camera.producer_hz)",
@@ -100,9 +125,9 @@ try {
     $sitlCommand = "'$sitlLauncher' '$ardupilot' '$runWsl' '$location' '$($script:Config.sitl_instance)' '$($settingsInfo.Network.WindowsIp)' '$($script:Config.ports.mission_planner_tcp)'"
     $sitlStart = Invoke-Wsl -Command $sitlCommand -AllowFailure
     if ($sitlStart.ExitCode -ne 0) { throw "Unable to launch ArduCopter SITL: $($sitlStart.Output -join ' ')" }
-    Start-Sleep -Seconds 3
-    $pidCheck = Invoke-Wsl -Command "test -s '$runWsl/sitl/wsl.pid' && kill -0 `$(cat '$runWsl/sitl/wsl.pid')" -AllowFailure
-    if ($pidCheck.ExitCode -ne 0) { throw "ArduCopter SITL exited during startup; see $runDirectory\sitl\sitl.log" }
+    $sitlLiveness = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\assert_sitl_alive.sh')
+    $pidCheck = Invoke-Wsl -Command "bash '$sitlLiveness' '$runWsl' 15" -AllowFailure
+    if ($pidCheck.ExitCode -ne 0) { throw "ArduCopter SITL did not remain stable for 15 seconds; see $runDirectory\sitl\sitl.log" }
 
     $nvidiaSmi = Get-Command 'nvidia-smi.exe' -ErrorAction SilentlyContinue
     if ($nvidiaSmi) {
@@ -122,7 +147,7 @@ try {
         $previousPythonPath = $env:PYTHONPATH
         try {
             $env:PYTHONPATH = Join-Path $script:RepoRoot 'third_party\Cosys-AirSim\PythonClient'
-            $clientArguments = @($benchmark, '--host', '127.0.0.1', '--port', $script:Config.ports.cosys_rpc_tcp, '--duration', $DurationSeconds, '--min-raw-fps', $MinRawFps, '--min-sustained-raw-fps', $MinSustainedRawFps, '--output', $output)
+            $clientArguments = @($benchmark, '--host', '127.0.0.1', '--port', $script:Config.ports.cosys_rpc_tcp, '--duration', $DurationSeconds, '--min-raw-fps', $MinRawFps, '--min-sustained-raw-fps', $MinSustainedRawFps, '--camera-pitch-deg', $CameraPitchDegrees, '--camera-height-m', $CameraHeightMeters, '--camera-offset-x-m', $CameraOffsetXMetres, '--camera-offset-y-m', $CameraOffsetYMetres, '--output', $output)
             if ($SaveSamples) { $clientArguments += '--save-samples' }
             & python @clientArguments 2>&1 |
                 Tee-Object -FilePath (Join-Path $runDirectory 'camera-benchmark.log') | ForEach-Object { Write-Host $_ }
@@ -136,7 +161,7 @@ try {
         $output = Convert-ToWslPath (Join-Path $runDirectory 'camera-benchmark.json')
         $pythonPath = Convert-ToWslPath (Join-Path $script:RepoRoot 'third_party\Cosys-AirSim\PythonClient')
         $sampleArgument = if ($SaveSamples) { ' --save-samples' } else { '' }
-        $command = "source ~/venv-ardupilot/bin/activate && PYTHONPATH='$pythonPath' python3 '$benchmark' --host '$($settingsInfo.Network.WindowsIp)' --port $($script:Config.ports.cosys_rpc_tcp) --duration $DurationSeconds --min-raw-fps $MinRawFps --min-sustained-raw-fps $MinSustainedRawFps --output '$output'$sampleArgument"
+        $command = "source ~/venv-ardupilot/bin/activate && PYTHONPATH='$pythonPath' python3 '$benchmark' --host '$($settingsInfo.Network.WindowsIp)' --port $($script:Config.ports.cosys_rpc_tcp) --duration $DurationSeconds --min-raw-fps $MinRawFps --min-sustained-raw-fps $MinSustainedRawFps --camera-pitch-deg $CameraPitchDegrees --camera-height-m $CameraHeightMeters --camera-offset-x-m $CameraOffsetXMetres --camera-offset-y-m $CameraOffsetYMetres --output '$output'$sampleArgument"
         $result = Invoke-Wsl -Command $command -AllowFailure
         $result.Output | Tee-Object -FilePath (Join-Path $runDirectory 'camera-benchmark.log') | ForEach-Object { Write-Host $_ }
         if ($result.ExitCode -ne 0) { throw "Camera benchmark failed with code $($result.ExitCode)." }

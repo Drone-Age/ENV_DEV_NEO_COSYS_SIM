@@ -14,12 +14,22 @@ INDRA acceptance requires at least 20 FPS at 640x480 and at least 10 FPS at 1280
 
 Run `./dev.ps1 camera-test` to create fresh evidence bundles. Mission Planner is never launched by this test. Count unique `time_stamp` values; repeated RPC responses must not be counted as new frames. The benchmark also reports p50/p95/p99/max delivery and simulation intervals plus the worst full two-second delivery window. A run fails if that window drops below 10 unique FPS, even if its whole-run average is high.
 
+For a scene-local visual stress check, `scripts/camera-benchmark.ps1` also accepts `CameraOffsetXMetres`, `CameraOffsetYMetres`, `CameraHeightMeters` and `CameraPitchDegrees`. Supplying any camera pose intentionally selects the synchronous capture path so a runtime pose change cannot race the asynchronous producer. These controls are diagnostic and never alter the normal qualification camera or vehicle spawn. Use the map's Unreal-local X=east/Y=north convention for the offsets.
+
 ## Measurements on the reference workstation
 
 The reference machine is Ryzen 5 8400F, RTX 5060 Ti 16 GB, UE 5.8.1 and Cosys Blocks. Each case used one sequential RPC request at a time with a live ArduCopter SITL peer.
 
 | Mode | Resolution | Format | Unique FPS | Mean latency |
 |---|---:|---:|---:|---:|
+| WorldCover fields v1 + crop v4 origin trial, SIM2 Rural, async | 640x480 | raw RGB | 28.85 / 28.0 worst 2 s | 34.66 ms |
+| WorldCover fields v1 + crop v4 origin trial, SIM2 Rural, async | 1280x720 | raw RGB | 28.78 / 27.5 worst 2 s | 34.73 ms |
+| WorldCover fields v1 + crop v3, SIM2 Rural, async | 640x480 | raw RGB | 29.52 / 29.0 worst 2 s | 33.88 ms |
+| WorldCover fields v1 + crop v3, SIM2 Rural, async | 1280x720 | raw RGB | 29.17 / 28.5 worst 2 s | 34.22 ms |
+| Crop v3, SIM2 Rural normal start, async | 640x480 | raw RGB | 29.95 / 29.5 worst 2 s | 33.36 ms |
+| Crop v3, SIM2 Rural normal start, async | 1280x720 | raw RGB | 28.85 / 24.0 worst 2 s | 34.63 ms |
+| Crop v3, direct corn-field inspection, synchronous | 1280x720 | raw RGB | 14.72 / 14.0 worst 2 s | 67.26 ms |
+| Crop v3, direct wheat-field inspection, synchronous | 1280x720 | raw RGB | 16.67 / 16.0 worst 2 s | 59.83 ms |
 | Nonblocking ArduCopter backend + live SITL, Blocks | 640x480 | raw RGB | 26.77 / 24.0 worst 2 s | 37.31 ms |
 | Nonblocking ArduCopter backend + live SITL, Blocks | 1280x720 | raw RGB | 24.03 / 18.5 worst 2 s | 41.54 ms |
 | Nonblocking ArduCopter backend + live SITL, Blocks | 1280x720 | PNG | 6.89 / 6.0 worst 2 s | 145.12 ms |
@@ -51,7 +61,7 @@ The reference machine is Ryzen 5 8400F, RTX 5060 Ti 16 GB, UE 5.8.1 and Cosys Bl
 | SIM2 Rural preview, 320x240 viewport | 1280x720 | raw RGB | 17.28 | 57.86 ms |
 | SIM2 Rural preview, strict repeat | 640x480 | raw RGB | 18.62 | 53.69 ms |
 
-The asynchronous rural runs used 411/411 unique frames at 640x480 and 410/410 at 1280x720, with no duplicate timestamps. A separate 1280x720 sample run measured pixel ranges 79-239 and 91-245 with standard deviations 51.09 and 43.32, proving that throughput did not hide a black buffer. Re-run qualification after scene, lighting, driver, camera count or capture-layer changes.
+The post-WorldCover runs are recorded in `2026-08-28_201915_camera-sim2-rural-640x480_2906b162` and `2026-08-28_202124_camera-sim2-rural-1280x720_da41fc33`. They produced 590/590 and 584/584 unique raw frames, zero duplicate timestamps and non-uniform samples. A separate earlier 1280x720 sample run measured pixel ranges 79-239 and 91-245 with standard deviations 51.09 and 43.32, proving that throughput did not hide a black buffer. Re-run qualification after scene, lighting, driver, camera count or capture-layer changes.
 
 The old 15.33 FPS result is therefore a historical synchronous-path measurement, not the current ceiling. For 1280x720 the hard release floor is 10 unique FPS in every complete two-second window, while stable 20 Hz remains the engineering target. A whole-run average above 10 FPS is insufficient if short stalls violate that window gate.
 

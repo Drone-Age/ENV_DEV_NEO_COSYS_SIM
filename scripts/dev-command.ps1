@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'vins-test', 'stop', 'logs', 'env', 'capabilities')][string]$Command,
-    [ValidateSet('list', 'doctor', 'build-map')][string]$EnvironmentCommand = 'list',
+    [ValidateSet('list', 'doctor', 'build-map', 'import-assets')][string]$EnvironmentCommand = 'list',
     [string]$Environment = 'blocks',
     [ValidateSet('qualification', 'visual')][string]$RenderProfile = 'qualification',
     [switch]$NoMissionPlanner,
@@ -99,7 +99,7 @@ function Invoke-EnvironmentDoctor([string]$EnvironmentId) {
 }
 
 function Invoke-EnvironmentBuildMap([string]$EnvironmentId) {
-    if ($EnvironmentId -ne 'sim2-rural') { throw "Automated map generation is not implemented for environment '$EnvironmentId'." }
+    if ($EnvironmentId -notin @('sim2-rural', 'cesium-global')) { throw "Automated map generation is not implemented for environment '$EnvironmentId'." }
     $manifest = Get-EnvironmentManifest -EnvironmentId $EnvironmentId -AllowScaffold
     $ue = Get-UeRoot
     $vs = Get-VsInstallPath
@@ -111,28 +111,70 @@ function Invoke-EnvironmentBuildMap([string]$EnvironmentId) {
 
     Write-Step "Staging the $EnvironmentId editor plugin"
     Stage-EnvironmentPlugin -Manifest $manifest
+
+    if ($EnvironmentId -eq 'cesium-global') {
+        $projectRoot = [IO.Path]::GetFullPath((Join-Path $script:RepoRoot 'unreal\IndraCosysDemo'))
+        $project = Join-Path $projectRoot 'IndraCosysDemo.uproject'
+        $buildBat = Join-Path $ue 'Engine\Build\BatchFiles\Build.bat'
+        $pluginName = [IO.Path]::GetFileNameWithoutExtension([string]$manifest.content_plugin.descriptor)
+        Write-Step 'Building the Cesium Global map commandlet against the pinned UE 5.8 plugin'
+        & $buildBat IndraCosysDemoEditor Win64 Development "-Project=$project" -WaitMutex -FromMsBuild -NoUBA -DisableAdaptiveUnity -MaxParallelActions=2 "-EnablePlugins=$pluginName" "-CompilerVersion=$compilerVersion" "-VCToolchainVersion=$compilerVersion" '-WindowsSdkVersion=10.0.22621.0'
+        if ($LASTEXITCODE -ne 0) { throw 'Cesium Global editor commandlet build failed.' }
+
+        $editor = Join-Path $ue 'Engine\Binaries\Win64\UnrealEditor-Cmd.exe'
+        $buildLog = Join-Path $script:RuntimeRoot 'cesium-global-build-map.log'
+        & $editor $project '-run=CesiumGlobalBuildMap' -unattended -nop4 -nosplash -NoSound -NullRHI "-abslog=$buildLog"
+        if ($LASTEXITCODE -ne 0) { throw "Cesium Global map generation failed; see $buildLog" }
+
+        $stagedContent = Join-Path $projectRoot 'Plugins\Environments\IndraCesiumGlobal\Content'
+        $sourcePlugin = [IO.Path]::GetFullPath((Join-Path $script:EnvironmentsRoot 'cesium-global\Plugins\IndraCesiumGlobal'))
+        $sourceContent = Join-Path $sourcePlugin 'Content'
+        New-Item -ItemType Directory -Force -Path $sourceContent | Out-Null
+        & robocopy.exe $stagedContent $sourceContent /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "Generated Cesium Global content sync failed with robocopy code $LASTEXITCODE." }
+
+        Stage-EnvironmentPlugin -Manifest $manifest
+        $verifyLog = Join-Path $script:RuntimeRoot 'cesium-global-verify-map.log'
+        & $editor $project '-run=CesiumGlobalBuildMap' -VerifyOnly -unattended -nop4 -nosplash -NoSound -NullRHI "-abslog=$verifyLog"
+        if ($LASTEXITCODE -ne 0) { throw "Cesium Global map verification failed; see $verifyLog" }
+        Write-Pass 'Cesium Global map' 'georeference, streamed terrain/buildings and token-free fallback verified'
+        return
+    }
     $projectRoot = [IO.Path]::GetFullPath((Join-Path $script:RepoRoot 'unreal\IndraCosysDemo'))
     $stagedPlugin = [IO.Path]::GetFullPath((Join-Path $projectRoot 'Plugins\Environments\Sim2Rural'))
     if (-not $stagedPlugin.StartsWith($projectRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $stagedPlugin) -ne 'Sim2Rural') { throw "Unsafe staged plugin path: $stagedPlugin" }
     $stagedContent = Join-Path $stagedPlugin 'Content'
-    if (Test-Path -LiteralPath $stagedContent) { Remove-Item -LiteralPath $stagedContent -Recurse -Force }
-    New-Item -ItemType Directory -Force -Path $stagedContent | Out-Null
+    $packagedMap = Join-Path $stagedContent 'Maps\SIM2_Rural_WP.umap'
+    if (-not (Test-Path -LiteralPath $packagedMap)) {
+        throw 'The packaged SIM2 Rural map is missing. Initialise the environment submodule and Git LFS; deployment does not regenerate the 4033x4033 Landscape.'
+    }
 
     Write-Step 'Building the deterministic Sim2Rural editor commandlet'
     $project = Join-Path $projectRoot 'IndraCosysDemo.uproject'
     $buildBat = Join-Path $ue 'Engine\Build\BatchFiles\Build.bat'
     $environmentPluginName = [IO.Path]::GetFileNameWithoutExtension([string]$manifest.content_plugin.descriptor)
-    & $buildBat IndraCosysDemoEditor Win64 Development "-Project=$project" -WaitMutex -FromMsBuild -NoUBA "-EnablePlugins=$environmentPluginName" "-CompilerVersion=$compilerVersion" "-VCToolchainVersion=$compilerVersion" '-WindowsSdkVersion=10.0.22621.0'
+    # The parent-owned AirSim plugin is a writable mirror. Without this flag UBT
+    # treats every mirrored source as an adaptive working-set file and expands a
+    # small map-editor change into dozens of multi-gigabyte non-unity actions.
+    & $buildBat IndraCosysDemoEditor Win64 Development "-Project=$project" -WaitMutex -FromMsBuild -NoUBA -DisableAdaptiveUnity -MaxParallelActions=2 "-EnablePlugins=$environmentPluginName" "-CompilerVersion=$compilerVersion" "-VCToolchainVersion=$compilerVersion" '-WindowsSdkVersion=10.0.22621.0'
     if ($LASTEXITCODE -ne 0) { throw 'Sim2Rural editor commandlet build failed.' }
 
-    $heightmap = Join-Path $script:EnvironmentsRoot 'sim2-rural\data\derived\gis\copdem-2021\height\SIM2_Rural_4033.png'
-    $imagery = Join-Path $script:EnvironmentsRoot 'sim2-rural\data\derived\gis\sentinel2-20250903\imagery\SIM2_Rural_Imagery_4096.png'
-    if (-not (Test-Path -LiteralPath $heightmap) -or -not (Test-Path -LiteralPath $imagery)) { throw 'Pinned Copernicus/Sentinel-2 build inputs are missing. Initialise Git LFS and run env doctor.' }
     $editor = Join-Path $ue 'Engine\Binaries\Win64\UnrealEditor-Cmd.exe'
-    $buildLog = Join-Path $script:RuntimeRoot 'sim2-rural-build-map.log'
-    Write-Step 'Generating the 4033 x 4033 World Partition landscape and real-map material'
-    & $editor $project '-run=Sim2RuralBuildMap' "-Heightmap=$heightmap" "-Imagery=$imagery" -unattended -nop4 -nosplash -NoSound -AllowCommandletRendering "-abslog=$buildLog"
-    if ($LASTEXITCODE -ne 0) { throw "Sim2Rural map generation failed; see $buildLog" }
+    # Deployment consumes the immutable, LFS-pinned map package. Re-importing
+    # the 4033² Landscape on every workstation is unnecessary and exposes an
+    # intermittent UE 5.8.1 Renderer/Landscape race. This metadata-only phase
+    # makes the complete physics core always-loaded without rebuilding assets.
+    $patchLog = Join-Path $script:RuntimeRoot 'sim2-rural-patch-physics.log'
+    Write-Step 'Applying the full-extent always-loaded collision contract to the packaged map'
+    & $editor $project '-run=Sim2RuralBuildMap' -PatchPhysicsCoverage -unattended -nop4 -nosplash -NoSound "-abslog=$patchLog"
+    if ($LASTEXITCODE -ne 0) { throw "Sim2Rural physics metadata patch failed; see $patchLog" }
+
+    $visualPatchLog = Join-Path $script:RuntimeRoot 'sim2-rural-patch-visual-assets.log'
+    $landcoverMask = Join-Path $script:EnvironmentsRoot 'sim2-rural\data\derived\gis\worldcover-2021\landcover\SIM2_Rural_Cropland_Mask_4096.png'
+    if (-not (Test-Path -LiteralPath $landcoverMask)) { throw "Pinned ESA WorldCover cropland mask is missing: $landcoverMask" }
+    Write-Step 'Applying provenance-tracked rural assets and the ESA WorldCover field layer'
+    & $editor $project '-run=Sim2RuralBuildMap' -PatchVisualAssets "-Landcover=$landcoverMask" -unattended -nop4 -nosplash -NoSound "-abslog=$visualPatchLog"
+    if ($LASTEXITCODE -ne 0) { throw "Sim2Rural visual asset patch failed; see $visualPatchLog" }
 
     $sourcePlugin = [IO.Path]::GetFullPath((Join-Path $script:EnvironmentsRoot 'sim2-rural\Plugins\Sim2Rural'))
     $sourceContent = [IO.Path]::GetFullPath((Join-Path $sourcePlugin 'Content'))
@@ -142,10 +184,10 @@ function Invoke-EnvironmentBuildMap([string]$EnvironmentId) {
     if ($LASTEXITCODE -ge 8) { throw "Generated Sim2Rural content sync failed with robocopy code $LASTEXITCODE." }
 
     $verifyLog = Join-Path $script:RuntimeRoot 'sim2-rural-verify-map.log'
-    Write-Step 'Reloading the saved map and verifying World Partition, imagery and collision'
+    Write-Step 'Reloading the saved map and verifying World Partition, imagery, collision and OSM actors'
     & $editor $project '-run=Sim2RuralBuildMap' -VerifyOnly -unattended -nop4 -nosplash -NoSound "-abslog=$verifyLog"
     if ($LASTEXITCODE -ne 0) { throw "Sim2Rural map verification failed; see $verifyLog" }
-    Write-Pass 'SIM2 Rural map' 'World Partition, 1024 render components, 1024 collision components, EPSG:32636 and Sentinel-2 material'
+    Write-Pass 'SIM2 Rural map' 'World Partition, terrain collision, EPSG:32636, Sentinel-2, ESA WorldCover fields and provenance-tracked OSM vegetation'
 }
 
 function Get-BackendCapabilities {
@@ -439,9 +481,8 @@ function Invoke-Build {
 
     Write-Step 'Building the pinned ROS 2 VINS/iMAVROS/vio_stack overlay'
     $repoWsl = Convert-ToWslPath $script:RepoRoot
-    $runtimeWsl = Convert-ToWslPath $script:RuntimeRoot
     $vinsBuilder = Convert-ToWslPath (Join-Path $PSScriptRoot 'wsl\build_vins_overlay.sh')
-    Invoke-Wsl -Command "bash '$vinsBuilder' '$repoWsl' '$runtimeWsl'" | Out-Null
+    Invoke-Wsl -Command "bash '$vinsBuilder' '$repoWsl' ~/.local/share/indra-cosys" | Out-Null
     Write-Pass 'Build' 'Cosys-AirSim, IndraCosysDemoEditor, ArduCopter SITL and pinned VINS overlay'
 }
 
@@ -461,10 +502,12 @@ function Start-RosBridge([string]$RunDirectory, [object]$Settings) {
     $deadline = (Get-Date).AddSeconds(180)
     $ready = $false
     while ((Get-Date) -lt $deadline) {
+        $reportedBridgeError = $null
         $check = Invoke-Wsl -Command "test -s '$runWsl/ros2/wsl.pid' && kill -0 `$(cat '$runWsl/ros2/wsl.pid') && test -s '$runWsl/ros2/status.json'" -AllowFailure
         if ($check.ExitCode -eq 0) {
             try {
                 $status = Get-Content -LiteralPath (Join-Path $RunDirectory 'ros2\status.json') -Raw | ConvertFrom-Json
+                if ([string]$status.last_error) { $reportedBridgeError = [string]$status.last_error }
                 $topics = $status.topics
                 $required = @('/sim/ground_truth/odom', '/sim/body/imu', '/sim/camera/imu', '/sim/camera/image_raw')
                 $ready = $true
@@ -472,13 +515,14 @@ function Start-RosBridge([string]$RunDirectory, [object]$Settings) {
                     $sample = $topics.PSObject.Properties[$topic].Value
                     if ($null -eq $sample -or [int64]$sample.count -lt 1) { $ready = $false; break }
                 }
-                if ($ready) { break }
+                if ($ready -and -not $reportedBridgeError) { break }
             } catch {
                 # The bridge replaces status.json atomically; retry while the
                 # first complete sensor snapshot is being written.
                 $ready = $false
             }
         }
+        if ($reportedBridgeError) { throw "ROS bridge rejected startup sensor data: $reportedBridgeError" }
         Start-Sleep -Milliseconds 500
     }
     if (-not $ready) { throw "ROS 2 bridge did not publish all required sensors within 180 seconds; see $RunDirectory\ros2\bridge.log" }
@@ -510,8 +554,8 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
         $plugin = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Plugins\AirSim\AirSim.uplugin'
         $editorDll = Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Binaries\Win64\UnrealEditor-IndraCosysDemo.dll'
         $sitl = Join-Path $script:RepoRoot 'third_party\ardupilot\build\sitl\bin\arducopter'
-        $vinsOverlay = Join-Path $script:RuntimeRoot 'vins-overlay-jazzy\install\setup.bash'
-        $vinsBuildMissing = $StartVins -and -not (Test-Path -LiteralPath $vinsOverlay)
+        $vinsOverlayCheck = Invoke-Wsl -Command "test -f ~/.local/share/indra-cosys/vins-overlay-jazzy/install/setup.bash" -AllowFailure
+        $vinsBuildMissing = $StartVins -and $vinsOverlayCheck.ExitCode -ne 0
         if (-not (Test-Path -LiteralPath $plugin) -or -not (Test-Path -LiteralPath $editorDll) -or -not (Test-Path -LiteralPath $sitl) -or $vinsBuildMissing) { Invoke-Build }
     }
     if (Get-ActiveRun) { throw 'An environment run is already active. Use .\dev.ps1 stop first.' }
@@ -565,6 +609,34 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
     if (-not $ready) { throw "AirSim did not bind UDP $($script:Config.ports.cosys_control_udp) within 10 minutes; see $ueLog" }
     Write-Pass 'AirSim readiness' "UDP $($script:Config.ports.cosys_control_udp) bound by Unreal PID $($ueProcess.Id)"
 
+    $environmentRuntimeGate = $null
+    if ($environmentManifest.id -eq 'sim2-rural') {
+        $terrainDeadline = (Get-Date).AddMinutes(2)
+        $terrainMatch = $null
+        while ((Get-Date) -lt $terrainDeadline) {
+            if ($ueProcess.HasExited) { throw "UnrealEditor exited before the SIM2 Rural full-extent terrain gate completed." }
+            $terrainLog = Get-Content -LiteralPath $ueLog -Raw -ErrorAction SilentlyContinue
+            if ($terrainLog -match 'SIM2_RURAL_FULL_EXTENT_FAIL[^\r\n]*') {
+                throw "SIM2 Rural full-extent collision gate failed: $($Matches[0])"
+            }
+            $terrainMatch = [regex]::Match($terrainLog, 'SIM2_RURAL_FULL_EXTENT_PASS traces=(\d+) landscape_hits=(\d+) failures=0 proxy_centres=(\d+) seam_pairs=(\d+) seam_jumps=0 boundary=(\d+) min_z_cm=([-0-9.]+) max_z_cm=([-0-9.]+)')
+            if ($terrainMatch.Success) { break }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $terrainMatch.Success) { throw "SIM2 Rural full-extent collision gate did not complete within 2 minutes; see $ueLog" }
+        $environmentRuntimeGate = [ordered]@{
+            verdict = 'PASS'
+            traces = [int]$terrainMatch.Groups[1].Value
+            landscape_hits = [int]$terrainMatch.Groups[2].Value
+            proxy_centres = [int]$terrainMatch.Groups[3].Value
+            seam_pairs = [int]$terrainMatch.Groups[4].Value
+            boundary = [int]$terrainMatch.Groups[5].Value
+            minimum_z_cm = [double]::Parse($terrainMatch.Groups[6].Value, [Globalization.CultureInfo]::InvariantCulture)
+            maximum_z_cm = [double]::Parse($terrainMatch.Groups[7].Value, [Globalization.CultureInfo]::InvariantCulture)
+        }
+        Write-Pass 'SIM2 Rural terrain' "$($environmentRuntimeGate.landscape_hits)/$($environmentRuntimeGate.traces) full-extent Landscape hits; 256 proxy centres and 480 seam pairs"
+    }
+
     $ardupilot = Convert-ToWslPath (Join-Path $script:RepoRoot 'third_party\ardupilot')
     $runWsl = Convert-ToWslPath $runDirectory
     $location = [string]::Format(
@@ -578,9 +650,9 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
     $sitlCommand = "'$sitlLauncher' '$ardupilot' '$runWsl' '$location' '$($script:Config.sitl_instance)' '$($settings.Network.WindowsIp)' '$($script:Config.ports.mission_planner_tcp)'"
     $sitlStart = Invoke-Wsl -Command $sitlCommand -AllowFailure
     if ($sitlStart.ExitCode -ne 0) { throw "Unable to launch ArduCopter SITL: $($sitlStart.Output -join ' ')" }
-    Start-Sleep -Seconds 2
-    $pidCheck = Invoke-Wsl -Command "test -s '$runWsl/sitl/wsl.pid' && kill -0 `$(cat '$runWsl/sitl/wsl.pid')" -AllowFailure
-    if ($pidCheck.ExitCode -ne 0) { throw "ArduCopter SITL exited during startup; see $runDirectory\sitl\sitl.log" }
+    $sitlLiveness = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\assert_sitl_alive.sh')
+    $pidCheck = Invoke-Wsl -Command "bash '$sitlLiveness' '$runWsl' 15" -AllowFailure
+    if ($pidCheck.ExitCode -ne 0) { throw "ArduCopter SITL did not remain stable for 15 seconds; see $runDirectory\sitl\sitl.log" }
     Write-Pass 'ArduCopter SITL' "instance $($script:Config.sitl_instance), AirSim $($settings.Network.WindowsIp), TCP $($script:Config.ports.mavlink_tcp)/$($script:Config.ports.mission_planner_tcp)"
 
     $mavlinkDeadline = (Get-Date).AddSeconds(60)
@@ -606,10 +678,10 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
         cosys_commit = $script:Lock.submodules.'third_party/Cosys-AirSim'.commit
         ardupilot_commit = $script:Lock.submodules.'third_party/ardupilot'.commit
         ue = $script:Lock.platform.unreal_engine; settings = $settings.Path
-        environment = [ordered]@{ id = $environmentManifest.id; version = $environmentManifest.version; readiness = $environmentManifest.readiness; preview_authorized = [bool]$Preview; map = $environmentManifest.map_path; render_profile = $RenderProfile }
+        environment = [ordered]@{ id = $environmentManifest.id; version = $environmentManifest.version; readiness = $environmentManifest.readiness; preview_authorized = [bool]$Preview; map = $environmentManifest.map_path; render_profile = $RenderProfile; runtime_gate = $environmentRuntimeGate }
         endpoints = $script:Config.ports; network = $settings.Network
         ros2 = [ordered]@{ enabled = [bool]$StartRos2; domain_id = [int]$script:Config.future_ros_domain_id }
-        vins = [ordered]@{ enabled = [bool]$StartVins; overlay = '.runtime/vins-overlay-jazzy/install/setup.bash' }
+        vins = [ordered]@{ enabled = [bool]$StartVins; overlay = '~/.local/share/indra-cosys/vins-overlay-jazzy/install/setup.bash' }
     }
     Write-JsonFile $metadata (Join-Path $runDirectory 'summary.json')
     return $runDirectory
@@ -629,7 +701,7 @@ function Invoke-SmokeTest {
         $controller = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\demo_mission.py')
         $timeout = [int]$script:Config.mission.timeout_s
         Write-Step 'Uploading TAKEOFF -> 15 m square -> LAND and evaluating acceptance gates'
-        $command = "source ~/venv-ardupilot/bin/activate && timeout $($timeout + 30) python3 '$controller' --connect tcp:127.0.0.1:$($script:Config.ports.mavlink_tcp) --output '$runWsl/mission-result.json' --lat $($script:Config.origin.latitude) --lon $($script:Config.origin.longitude) --alt $($script:Config.origin.altitude_m) --takeoff $($script:Config.mission.takeoff_m) --side $($script:Config.mission.square_side_m) --timeout $timeout"
+        $command = "source ~/venv-ardupilot/bin/activate && timeout $($timeout + 30) python3 '$controller' --connect tcp:127.0.0.1:$($script:Config.ports.mavlink_tcp) --output '$runWsl/mission-result.json' --sitl-pid-file '$runWsl/sitl/sitl.pid' --lat $($script:Config.origin.latitude) --lon $($script:Config.origin.longitude) --alt $($script:Config.origin.altitude_m) --takeoff $($script:Config.mission.takeoff_m) --side $($script:Config.mission.square_side_m) --timeout $timeout"
         $result = Invoke-Wsl -Command $command -AllowFailure
         $result.Output | Tee-Object -FilePath (Join-Path $runDirectory 'controller.log') | ForEach-Object { Write-Host $_ }
         if ($result.ExitCode -ne 0) { throw "Smoke mission failed with code $($result.ExitCode)." }
@@ -669,6 +741,7 @@ function Assert-RosBridgeTransport([string]$RunDirectory) {
         if ($null -eq $sample) { throw "ROS bridge status is missing $topic" }
         if ([int64]$sample.errors -ne 0) { throw "ROS bridge $topic recorded $($sample.errors) errors" }
         if ([int64]$sample.batch_overflows -ne 0) { throw "ROS bridge $topic recorded $($sample.batch_overflows) batch overflows" }
+        if ([int64]$sample.physical_rejected -ne 0) { throw "ROS bridge $topic rejected $($sample.physical_rejected) physically invalid samples" }
         if ([int64]$sample.backward_dropped -ne 0 -or [int64]$sample.duplicates_dropped -ne 0) {
             throw "ROS bridge $topic did not preserve a strictly increasing sample sequence"
         }
@@ -733,16 +806,22 @@ function Invoke-VinsRuntimeTest {
     try {
         $runWsl = Convert-ToWslPath $runDirectory
         $repoWsl = Convert-ToWslPath $script:RepoRoot
-        $probe = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\vins_runtime_probe.py')
+        $qualification = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\vins_flight_qualification.sh')
         $output = "$runWsl/vins/runtime-probe.json"
         $domainId = [int]$script:Config.future_ros_domain_id
-        $command = "if [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else source /opt/iros2j/setup.bash; fi; source '$repoWsl/.runtime/vins-overlay-jazzy/install/setup.bash'; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$probe' --timeout 300 --output '$output'"
-        Write-Step 'Waiting for iHUB sweep, moving CameraImu, VINS TRACKING and ExternalNav READY'
+        $controllerPort = [int]$script:Config.ports.mission_planner_tcp
+        $missionTimeout = [int]$script:Config.mission.timeout_s
+        $command = "bash '$qualification' '$repoWsl' '$runWsl' '$domainId' '$controllerPort' '$($script:Config.origin.latitude)' '$($script:Config.origin.longitude)' '$($script:Config.origin.altitude_m)' '$($script:Config.mission.takeoff_m)' '$($script:Config.mission.square_side_m)' '$missionTimeout' '480' '180'"
+        Write-Step 'Waiting for iHUB calibration, then flying a GPS-safe translation route for VINS/ExternalNav admission'
         $result = Invoke-Wsl -Command $command -AllowFailure
         $result.Output | Tee-Object -FilePath (Join-Path $runDirectory 'vins\runtime-probe.log') | ForEach-Object { Write-Host $_ }
         if ($result.ExitCode -ne 0) { throw "VINS runtime qualification failed with code $($result.ExitCode)." }
         $probeResult = Get-Content -Raw -LiteralPath (Join-Path $runDirectory 'vins\runtime-probe.json') | ConvertFrom-Json
         if ($probeResult.status -ne 'PASS') { throw "VINS runtime verdict is $($probeResult.status)." }
+        $missionPath = Join-Path $runDirectory 'vins\qualification-mission.json'
+        if (-not (Test-Path -LiteralPath $missionPath)) { throw 'VINS translation mission evidence is missing.' }
+        $missionResult = Get-Content -Raw -LiteralPath $missionPath | ConvertFrom-Json
+        if ($missionResult.verdict -ne 'PASS') { throw "VINS translation mission verdict is $($missionResult.verdict)." }
         $bridgeStatus = Assert-RosBridgeTransport -RunDirectory $runDirectory
         if ([int64]$bridgeStatus.gimbal.rejected -ne 0) { throw 'ROS bridge rejected an authoritative gimbal sample.' }
         $summaryPath = Join-Path $runDirectory 'summary.json'
@@ -750,6 +829,7 @@ function Invoke-VinsRuntimeTest {
         $summary.status = 'PASS'
         $summary | Add-Member -NotePropertyName completed_at -NotePropertyValue (Get-Date).ToUniversalTime().ToString('o') -Force
         $summary | Add-Member -NotePropertyName vins_runtime_probe -NotePropertyValue $probeResult -Force
+        $summary | Add-Member -NotePropertyName vins_translation_mission -NotePropertyValue $missionResult -Force
         $summary | Add-Member -NotePropertyName ros_bridge_status -NotePropertyValue $bridgeStatus -Force
         Write-JsonFile $summary $summaryPath
         Write-Host "VINS runtime PASS: $runDirectory" -ForegroundColor Green
@@ -799,6 +879,15 @@ switch ($Command) {
             'list' { Invoke-EnvironmentList }
             'doctor' { exit (Invoke-EnvironmentDoctor -EnvironmentId $Environment) }
             'build-map' { Invoke-EnvironmentBuildMap -EnvironmentId $Environment }
+            'import-assets' {
+                if ($Environment -ne 'sim2-rural') { throw "Asset import is not implemented for environment '$Environment'." }
+                & (Join-Path $PSScriptRoot 'import-epic-template-tree.ps1')
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                & (Join-Path $PSScriptRoot 'import-polyhaven-rural-assets.ps1')
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                & (Join-Path $PSScriptRoot 'import-quaternius-crops.ps1')
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
         }
     }
     'capabilities' { Write-Capabilities }

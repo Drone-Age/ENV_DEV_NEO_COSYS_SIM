@@ -32,6 +32,139 @@ function Initialize-EnvironmentPackage([string]$EnvironmentId) {
     }
 }
 
+function Resolve-EnvironmentPackageFile {
+    param(
+        [Parameter(Mandatory)][string]$EnvironmentRoot,
+        [Parameter(Mandatory)][string]$RelativePath,
+        [Parameter(Mandatory)][string]$Label
+    )
+    if ([string]::IsNullOrWhiteSpace($RelativePath) -or [IO.Path]::IsPathRooted($RelativePath) -or $RelativePath -match '^[a-zA-Z][a-zA-Z0-9+.-]*:') {
+        throw "$Label must be a repository-relative path, found '$RelativePath'."
+    }
+    $root = [IO.Path]::GetFullPath($EnvironmentRoot).TrimEnd('\')
+    $resolved = [IO.Path]::GetFullPath((Join-Path $root $RelativePath))
+    if (-not $resolved.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Label escapes the environment package: '$RelativePath'."
+    }
+    if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+        throw "$Label is missing: $resolved"
+    }
+    return $resolved
+}
+
+function Assert-EnvironmentAssetReceipts {
+    param(
+        [Parameter(Mandatory)][string]$EnvironmentId,
+        [Parameter(Mandatory)][string]$EnvironmentRoot,
+        [Parameter(Mandatory)][object]$Manifest
+    )
+    $property = $Manifest.psobject.Properties['asset_receipts']
+    if (-not $property) { return }
+    foreach ($entry in @($property.Value)) {
+        $receiptPath = Resolve-EnvironmentPackageFile -EnvironmentRoot $EnvironmentRoot -RelativePath ([string]$entry.path) -Label "Environment '$EnvironmentId' asset receipt"
+        try { $receipt = Get-Content -Raw -LiteralPath $receiptPath | ConvertFrom-Json } catch { throw "Invalid JSON in asset receipt $receiptPath`: $($_.Exception.Message)" }
+        if ([string]$receipt.status -ne [string]$entry.status) {
+            throw "Environment '$EnvironmentId' asset receipt '$($entry.path)' status is '$($receipt.status)', expected '$($entry.status)'."
+        }
+        $sourceLock = [string]$receipt.source_lock
+        if ([string]::IsNullOrWhiteSpace($sourceLock) -or [IO.Path]::IsPathRooted($sourceLock) -or $sourceLock -match '^[a-zA-Z][a-zA-Z0-9+.-]*:') {
+            throw "Environment '$EnvironmentId' asset receipt '$($entry.path)' contains a non-portable source_lock '$sourceLock'."
+        }
+        $receiptRoot = Split-Path -Parent $receiptPath
+        Resolve-EnvironmentPackageFile -EnvironmentRoot $receiptRoot -RelativePath $sourceLock -Label "Environment '$EnvironmentId' asset source lock" | Out-Null
+        $validationProperty = $receipt.psobject.Properties['unreal_validation']
+        if ($validationProperty) {
+            $validationLockProperty = $validationProperty.Value.psobject.Properties['source_lock']
+            if ($validationLockProperty -and [string]$validationLockProperty.Value -ne $sourceLock) {
+                throw "Environment '$EnvironmentId' asset receipt '$($entry.path)' has inconsistent Unreal source_lock '$($validationLockProperty.Value)'."
+            }
+        }
+    }
+}
+
+function Assert-EnvironmentFieldCrops {
+    param(
+        [Parameter(Mandatory)][string]$EnvironmentId,
+        [Parameter(Mandatory)][string]$EnvironmentRoot,
+        [Parameter(Mandatory)][object]$Manifest
+    )
+    $mapBuildProperty = $Manifest.psobject.Properties['map_build']
+    if (-not $mapBuildProperty) { return }
+    $fieldCropsProperty = $mapBuildProperty.Value.psobject.Properties['field_crops']
+    if (-not $fieldCropsProperty) { return }
+    $fieldCrops = $fieldCropsProperty.Value
+    $source = [string]$fieldCrops.source
+    $strategyProperty = $fieldCrops.psobject.Properties['sowing_strategy']
+    if ([string]::IsNullOrWhiteSpace($source) -or -not $strategyProperty) {
+        throw "Environment '$EnvironmentId' field_crops must declare source and sowing_strategy."
+    }
+    $strategy = $strategyProperty.Value
+    if ([string]$strategy.parcel_assignment -ne 'stable-per-field') {
+        throw "Environment '$EnvironmentId' field_crops parcel_assignment must be stable-per-field."
+    }
+    $maskProperty = $fieldCrops.psobject.Properties['authoritative_cropland_mask']
+    $seedProperty = $fieldCrops.psobject.Properties['assignment_seed']
+    if (-not $maskProperty -or -not $seedProperty -or $seedProperty.Value -isnot [ValueType]) {
+        throw "Environment '$EnvironmentId' field_crops requires an authoritative mask and numeric deterministic assignment seed."
+    }
+    Resolve-EnvironmentPackageFile -EnvironmentRoot $EnvironmentRoot -RelativePath ([string]$maskProperty.Value) -Label "Environment '$EnvironmentId' authoritative cropland mask" | Out-Null
+    $baseline = @($strategy.baseline_crops | ForEach-Object { [string]$_ })
+    if ($baseline.Count -lt 1 -or @($baseline | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0 -or @($baseline | Select-Object -Unique).Count -ne $baseline.Count) {
+        throw "Environment '$EnvironmentId' field_crops baseline_crops must contain unique non-empty asset ids."
+    }
+    $optional = @($strategy.optional_crops | ForEach-Object { [string]$_ })
+    if (@($optional | Where-Object { $baseline -contains $_ }).Count -gt 0) {
+        throw "Environment '$EnvironmentId' optional crops must not also appear in baseline_crops."
+    }
+    $exclusions = @($strategy.exclude | ForEach-Object { [string]$_ })
+    foreach ($requiredExclusion in @('roads', 'buildings', 'water', 'qualification-clearing')) {
+        if ($exclusions -notcontains $requiredExclusion) {
+            throw "Environment '$EnvironmentId' field crop exclusions must include '$requiredExclusion'."
+        }
+    }
+    foreach ($tier in @('near', 'mid', 'far')) {
+        $tierProperty = $strategy.psobject.Properties[$tier]
+        if (-not $tierProperty -or [string]::IsNullOrWhiteSpace([string]$tierProperty.Value)) {
+            throw "Environment '$EnvironmentId' field crop strategy must define the '$tier' representation tier."
+        }
+    }
+
+    $provenanceProperty = $Manifest.psobject.Properties['asset_provenance']
+    if (-not $provenanceProperty -or @($provenanceProperty.Value).Count -lt 1) {
+        throw "Environment '$EnvironmentId' field_crops requires at least one asset_provenance manifest."
+    }
+    $matches = @()
+    foreach ($relativeProvenance in @($provenanceProperty.Value)) {
+        $provenancePath = Resolve-EnvironmentPackageFile -EnvironmentRoot $EnvironmentRoot -RelativePath ([string]$relativeProvenance) -Label "Environment '$EnvironmentId' asset provenance"
+        try { $provenance = Get-Content -Raw -LiteralPath $provenancePath | ConvertFrom-Json } catch { throw "Invalid JSON in asset provenance $provenancePath`: $($_.Exception.Message)" }
+        $matches += @($provenance.assets | Where-Object { [string]$_.id -eq $source } | ForEach-Object { [pscustomobject]@{ Asset = $_; Root = Split-Path -Parent $provenancePath } })
+    }
+    if ($matches.Count -ne 1) {
+        throw "Environment '$EnvironmentId' field crop source '$source' must resolve to exactly one provenance record; found $($matches.Count)."
+    }
+    $sourceAsset = $matches[0].Asset
+    if ([string]::IsNullOrWhiteSpace([string]$sourceAsset.license) -or [string]::IsNullOrWhiteSpace([string]$sourceAsset.receipt)) {
+        throw "Environment '$EnvironmentId' field crop source '$source' lacks licence or receipt provenance."
+    }
+    $sourceReceiptPath = Resolve-EnvironmentPackageFile -EnvironmentRoot $matches[0].Root -RelativePath ([string]$sourceAsset.receipt) -Label "Environment '$EnvironmentId' field crop receipt"
+    $sourceReceipt = Get-Content -Raw -LiteralPath $sourceReceiptPath | ConvertFrom-Json
+    if ([string]$sourceReceipt.status -ne 'accepted') {
+        throw "Environment '$EnvironmentId' field crop receipt status is '$($sourceReceipt.status)', not 'accepted'."
+    }
+    $sourceMeshIds = @($sourceReceipt.source_files | Where-Object { [string]$_.role -eq 'mesh' } | ForEach-Object { [string]$_.id })
+    $validatedMeshIds = @($sourceReceipt.unreal_validation.meshes | ForEach-Object { [string]$_.id })
+    foreach ($crop in $baseline) {
+        if ($sourceMeshIds -notcontains $crop -or $validatedMeshIds -notcontains $crop) {
+            throw "Environment '$EnvironmentId' baseline crop '$crop' is not both source-pinned and Unreal-validated by '$source'."
+        }
+        $minimum = $fieldCrops.minimum_instances.psobject.Properties[$crop]
+        $maximum = $fieldCrops.maximum_instances.psobject.Properties[$crop]
+        if (-not $minimum -or -not $maximum -or [int64]$minimum.Value -lt 1 -or [int64]$maximum.Value -lt [int64]$minimum.Value) {
+            throw "Environment '$EnvironmentId' baseline crop '$crop' requires valid minimum_instances and maximum_instances bounds."
+        }
+    }
+}
+
 function Get-EnvironmentManifest {
     param(
         [Parameter(Mandatory)][ValidatePattern('^[a-z0-9][a-z0-9-]*$')][string]$EnvironmentId,
@@ -64,6 +197,8 @@ function Get-EnvironmentManifest {
         $requiredDescriptor = Join-Path $requiredPath ([string]$requiredPlugin.descriptor)
         if (-not (Test-Path -LiteralPath $requiredDescriptor -PathType Leaf)) { throw "Environment '$EnvironmentId' required plugin is missing: $requiredDescriptor" }
     }
+    Assert-EnvironmentAssetReceipts -EnvironmentId $EnvironmentId -EnvironmentRoot $directory -Manifest $manifest
+    Assert-EnvironmentFieldCrops -EnvironmentId $EnvironmentId -EnvironmentRoot $directory -Manifest $manifest
     foreach ($dataset in @($manifest.datasets)) {
         $derivedManifestProperty = $dataset.psobject.Properties['derived_manifest']
         if (-not $derivedManifestProperty) { continue }
@@ -110,7 +245,123 @@ function Get-RuntimeEnvironmentManifest {
     return $manifest
 }
 
+function Install-EnvironmentExternalPlugins([object]$Manifest) {
+    $property = $Manifest.psobject.Properties['external_plugins']
+    if (-not $property) { return }
+
+    $ueRoot = Get-UeRoot
+    if (-not $ueRoot) { throw 'UE 5.8.1 is required before external Unreal plugins can be installed.' }
+    # Official prebuilt Marketplace plugins must live under the Engine. If they
+    # are placed in the project UBT treats their Source as project code and
+    # needlessly recompiles already compatible release binaries.
+    $externalRoot = [IO.Path]::GetFullPath((Join-Path $ueRoot 'Engine\Plugins\Marketplace'))
+    $downloadRoot = [IO.Path]::GetFullPath((Join-Path $script:RuntimeRoot 'downloads'))
+    New-Item -ItemType Directory -Force -Path $externalRoot, $downloadRoot | Out-Null
+
+    $legacyProjectExternal = [IO.Path]::GetFullPath((Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Plugins\External'))
+    if (Test-Path -LiteralPath $legacyProjectExternal) {
+        $projectPluginsRoot = [IO.Path]::GetFullPath((Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Plugins'))
+        if (-not $legacyProjectExternal.StartsWith($projectPluginsRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or
+            (Split-Path -Leaf $legacyProjectExternal) -ne 'External') {
+            throw "Unsafe legacy external plugin cleanup path: $legacyProjectExternal"
+        }
+        Remove-Item -LiteralPath $legacyProjectExternal -Recurse -Force
+    }
+
+    foreach ($plugin in @($property.Value)) {
+        $name = [string]$plugin.name
+        $target = [IO.Path]::GetFullPath((Join-Path $externalRoot $name))
+        if (-not $target.StartsWith($externalRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $target) -ne $name) {
+            throw "Unsafe external plugin target: $target"
+        }
+        $descriptor = Join-Path $target ([string]$plugin.descriptor)
+        $receiptPath = Join-Path $target '.indra-install.json'
+        $pluginModulesPath = Join-Path $target 'Binaries\Win64\UnrealEditor.modules'
+        $engineModulesPath = Join-Path $ueRoot 'Engine\Binaries\Win64\UnrealEditor.modules'
+        $validInstall = $false
+        if ((Test-Path -LiteralPath $descriptor -PathType Leaf) -and
+            (Test-Path -LiteralPath $receiptPath -PathType Leaf) -and
+            (Test-Path -LiteralPath $pluginModulesPath -PathType Leaf) -and
+            (Test-Path -LiteralPath $engineModulesPath -PathType Leaf)) {
+            try {
+                $installed = Get-Content -Raw -LiteralPath $descriptor | ConvertFrom-Json
+                $receipt = Get-Content -Raw -LiteralPath $receiptPath | ConvertFrom-Json
+                $pluginModules = Get-Content -Raw -LiteralPath $pluginModulesPath | ConvertFrom-Json
+                $engineModules = Get-Content -Raw -LiteralPath $engineModulesPath | ConvertFrom-Json
+                $validInstall = [string]$installed.VersionName -eq [string]$plugin.version -and
+                    [string]$installed.EngineVersion -eq [string]$plugin.engine_version -and
+                    [string]$receipt.archive_sha256 -eq ([string]$plugin.sha256).ToLowerInvariant() -and
+                    [string]$receipt.source_url -eq [string]$plugin.url -and
+                    [string]$pluginModules.BuildId -eq [string]$engineModules.BuildId
+            } catch { $validInstall = $false }
+        }
+        if ($validInstall) {
+            Write-Pass "External plugin $name" "v$($plugin.version), UE $($plugin.engine_version), cached"
+            continue
+        }
+
+        $archive = [IO.Path]::GetFullPath((Join-Path $downloadRoot ([string]$plugin.archive)))
+        $expectedHash = ([string]$plugin.sha256).ToLowerInvariant()
+        $archiveValid = (Test-Path -LiteralPath $archive -PathType Leaf) -and
+            ((Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant() -eq $expectedHash)
+        if (-not $archiveValid) {
+            $partial = "$archive.partial"
+            Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+            $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+            if (-not $curl) { throw "curl.exe is required to download external plugin $name." }
+            Write-Step "Downloading pinned external plugin $name v$($plugin.version)"
+            & $curl.Source -L --fail --retry 3 --output $partial ([string]$plugin.url)
+            if ($LASTEXITCODE -ne 0) { throw "Download failed for external plugin $name." }
+            $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $partial).Hash.ToLowerInvariant()
+            if ($actualHash -ne $expectedHash) {
+                Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+                throw "SHA-256 mismatch for external plugin $name`: expected $expectedHash, received $actualHash."
+            }
+            Move-Item -LiteralPath $partial -Destination $archive -Force
+        }
+
+        $extractRoot = [IO.Path]::GetFullPath((Join-Path $script:RuntimeRoot ("extract-{0}-{1}" -f $name, [guid]::NewGuid().ToString('N'))))
+        New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
+        try {
+            Write-Step "Installing pinned external plugin $name v$($plugin.version)"
+            & tar.exe -xf $archive -C $extractRoot
+            if ($LASTEXITCODE -ne 0) { throw "Extraction failed for external plugin $name." }
+            $source = Join-Path $extractRoot $name
+            $sourceDescriptor = Join-Path $source ([string]$plugin.descriptor)
+            if (-not (Test-Path -LiteralPath $sourceDescriptor -PathType Leaf)) {
+                throw "External plugin archive does not contain $name/$($plugin.descriptor)."
+            }
+            if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+            New-Item -ItemType Directory -Force -Path $target | Out-Null
+            & robocopy.exe $source $target /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+            if ($LASTEXITCODE -ge 8) { throw "External plugin staging failed with robocopy code $LASTEXITCODE." }
+            Write-JsonFile ([ordered]@{
+                schema = 1
+                name = $name
+                version = [string]$plugin.version
+                engine_version = [string]$plugin.engine_version
+                source_url = [string]$plugin.url
+                archive_sha256 = $expectedHash
+                installed_at_utc = (Get-Date).ToUniversalTime().ToString('o')
+            }) $receiptPath
+        } finally {
+            if ($extractRoot.StartsWith($script:RuntimeRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+                Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+        $installedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+        $pluginBuildId = (Get-Content -Raw -LiteralPath $pluginModulesPath | ConvertFrom-Json).BuildId
+        $engineBuildId = (Get-Content -Raw -LiteralPath $engineModulesPath | ConvertFrom-Json).BuildId
+        if (-not (Test-Path -LiteralPath $descriptor) -or -not (Test-Path -LiteralPath $receiptPath) -or
+            $installedHash -ne $expectedHash -or [string]$pluginBuildId -ne [string]$engineBuildId) {
+            throw "External plugin $name installation verification failed."
+        }
+        Write-Pass "External plugin $name" "v$($plugin.version), UE $($plugin.engine_version), SHA-256 verified"
+    }
+}
+
 function Stage-EnvironmentPlugin([object]$Manifest) {
+    Install-EnvironmentExternalPlugins -Manifest $Manifest
     $projectPluginsRoot = [IO.Path]::GetFullPath((Join-Path $script:RepoRoot 'unreal\IndraCosysDemo\Plugins'))
     $stagingRoot = [IO.Path]::GetFullPath((Join-Path $projectPluginsRoot 'Environments'))
     if (-not $stagingRoot.StartsWith($projectPluginsRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $stagingRoot) -ne 'Environments') {
