@@ -357,6 +357,21 @@ function Assert-QualificationCapabilities {
     throw "$kind qualification is registered but not enabled on the current Cosys backend. Missing capabilities: $($missing -join ', '). Query '.\dev.ps1 capabilities -Environment $Environment -Json'. No simulator process was started."
 }
 
+function Get-ExactGitHead([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return $null }
+    if (-not (Test-Path -LiteralPath (Join-Path $Path '.git'))) { return $null }
+    $topOutput = @(& git -C $Path rev-parse --show-toplevel 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $topOutput.Count -ne 1) { return $null }
+    $expectedTop = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $Path).Path).TrimEnd('\', '/')
+    $actualTop = [IO.Path]::GetFullPath($topOutput[0].Trim()).TrimEnd('\', '/')
+    if ($actualTop -ine $expectedTop) { return $null }
+    $headOutput = @(& git -C $Path rev-parse --verify HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $headOutput.Count -ne 1) { return $null }
+    $head = $headOutput[0].Trim()
+    if ($head -notmatch '^[0-9a-f]{40}$') { return $null }
+    return $head
+}
+
 function Invoke-Doctor {
     Write-Step 'Checking the v0.1 workstation contract'
     $failures = 0
@@ -402,14 +417,26 @@ function Invoke-Doctor {
 
     foreach ($entry in $script:Lock.submodules.psobject.Properties) {
         $path = Join-Path $script:RepoRoot $entry.Name
-        $actual = (& git -C $path rev-parse HEAD 2>$null).Trim()
-        if ($actual -eq $entry.Value.commit) { Write-Pass $entry.Name $actual.Substring(0, 12) } else { Write-Fail $entry.Name "expected $($entry.Value.commit), found $actual"; $failures++ }
-        if ($entry.Value.PSObject.Properties.Name -contains 'nested_submodules') {
+        $actual = Get-ExactGitHead $path
+        if ($actual -eq $entry.Value.commit) {
+            Write-Pass $entry.Name $actual.Substring(0, 12)
+        } else {
+            $found = if ($actual) { $actual } else { 'not initialized as an exact submodule checkout' }
+            Write-Fail $entry.Name "expected $($entry.Value.commit), found $found"
+            $failures++
+        }
+        if (($entry.Value.PSObject.Properties.Name -contains 'nested_submodules') -and $null -ne $entry.Value.nested_submodules) {
             foreach ($nested in $entry.Value.nested_submodules.PSObject.Properties) {
                 $nestedPath = Join-Path $path $nested.Name
-                $nestedActual = (& git -C $nestedPath rev-parse HEAD 2>$null).Trim()
+                $nestedActual = Get-ExactGitHead $nestedPath
                 $label = "$($entry.Name)/$($nested.Name)"
-                if ($nestedActual -eq $nested.Value) { Write-Pass $label $nestedActual.Substring(0, 12) } else { Write-Fail $label "expected $($nested.Value), found $nestedActual"; $failures++ }
+                if ($nestedActual -eq $nested.Value) {
+                    Write-Pass $label $nestedActual.Substring(0, 12)
+                } else {
+                    $found = if ($nestedActual) { $nestedActual } else { 'not initialized as an exact submodule checkout' }
+                    Write-Fail $label "expected $($nested.Value), found $found"
+                    $failures++
+                }
             }
         }
     }

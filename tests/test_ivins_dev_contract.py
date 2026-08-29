@@ -85,6 +85,20 @@ class IvinsDevContractTests(unittest.TestCase):
         self.assertIn("-IvinsRuntime source", documentation)
         self.assertIn("cannot serve as official", documentation)
 
+    def test_doctor_never_accepts_parent_head_for_empty_submodule(self):
+        command = (ROOT / "scripts" / "dev-command.ps1").read_text(encoding="utf-8")
+        helper = command.split("function Get-ExactGitHead", 1)[1].split(
+            "function Invoke-Doctor", 1
+        )[0]
+        doctor = command.split("function Invoke-Doctor", 1)[1].split(
+            "function Invoke-Setup", 1
+        )[0]
+        self.assertIn("Test-Path -LiteralPath (Join-Path $Path '.git')", helper)
+        self.assertIn("rev-parse --show-toplevel", helper)
+        self.assertIn("$actualTop -ine $expectedTop", helper)
+        self.assertIn("Get-ExactGitHead $path", doctor)
+        self.assertIn("not initialized as an exact submodule checkout", doctor)
+
 
 if __name__ == "__main__":
     unittest.main()
