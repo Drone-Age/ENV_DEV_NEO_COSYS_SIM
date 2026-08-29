@@ -99,6 +99,36 @@ class IvinsDevContractTests(unittest.TestCase):
         self.assertIn("Get-ExactGitHead $path", doctor)
         self.assertIn("not initialized as an exact submodule checkout", doctor)
 
+    def test_wsl_bootstrap_is_normalized_to_lf_before_bash(self):
+        setup = (ROOT / "scripts" / "setup-wsl-distro.ps1").read_text(encoding="utf-8")
+        self.assertIn('$bootstrap.Replace("`r`n", "`n").Replace("`r", "`n")', setup)
+        self.assertIn("bash -lc $bootstrapLf", setup)
+        self.assertNotIn("bash -lc $bootstrap\n", setup)
+
+    def test_builtin_environment_does_not_require_a_submodule_property(self):
+        common = (ROOT / "scripts" / "common.ps1").read_text(encoding="utf-8")
+        initializer = common.split("function Initialize-EnvironmentPackage", 1)[1].split(
+            "function Resolve-EnvironmentPackageFile", 1
+        )[0]
+        self.assertIn("psobject.Properties['submodule']", initializer)
+        self.assertIn("if (-not $submoduleProperty", initializer)
+        self.assertNotIn("-not $property.Value.submodule", initializer)
+
+    def test_firewall_permission_errors_cannot_be_reported_as_pass(self):
+        firewall = (ROOT / "scripts" / "configure-firewall.ps1").read_text(
+            encoding="utf-8"
+        )
+        for command in (
+            "Set-NetFirewallRule",
+            "Set-NetFirewallApplicationFilter",
+            "Set-NetFirewallPortFilter",
+            "New-NetFirewallRule",
+            "Set-NetFirewallHyperVRule",
+            "New-NetFirewallHyperVRule",
+        ):
+            line = next(line for line in firewall.splitlines() if command in line)
+            self.assertIn("-ErrorAction Stop", line)
+
 
 if __name__ == "__main__":
     unittest.main()

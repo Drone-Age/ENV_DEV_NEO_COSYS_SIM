@@ -51,7 +51,8 @@ printf '%s\n' 'indra ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/90-indra-cosys-sim
 chmod 0440 /etc/sudoers.d/90-indra-cosys-sim
 printf '%s\n' '[user]' 'default=indra' '[boot]' 'systemd=true' >/etc/wsl.conf
 '@
-& wsl.exe -d $DistroName -u root -- bash -lc $bootstrap
+$bootstrapLf = $bootstrap.Replace("`r`n", "`n").Replace("`r", "`n")
+& wsl.exe -d $DistroName -u root -- bash -lc $bootstrapLf
 if ($LASTEXITCODE -ne 0) { throw "Unable to configure the isolated WSL user in '$DistroName'." }
 & wsl.exe --terminate $DistroName
 if ($LASTEXITCODE -ne 0) { throw "Unable to restart WSL distribution '$DistroName'." }
