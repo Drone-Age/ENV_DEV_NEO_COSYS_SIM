@@ -449,10 +449,11 @@ function Get-WindowsSdkRoot {
 
 function Invoke-Wsl {
     param([Parameter(Mandatory)][string]$Command, [switch]$AllowFailure)
-    $output = & wsl.exe -d $script:Lock.platform.wsl_distribution -- bash -lc $Command 2>&1
+    $commandLf = $Command.Replace("`r`n", "`n").Replace("`r", "`n")
+    $output = & wsl.exe -d $script:Lock.platform.wsl_distribution -- bash -lc $commandLf 2>&1
     $code = $LASTEXITCODE
     if ($code -ne 0 -and -not $AllowFailure) {
-        throw "WSL command failed ($code): $Command`n$($output -join [Environment]::NewLine)"
+        throw "WSL command failed ($code): $commandLf`n$($output -join [Environment]::NewLine)"
     }
     return [pscustomobject]@{ ExitCode = $code; Output = @($output) }
 }

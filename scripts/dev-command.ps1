@@ -51,17 +51,17 @@ function Invoke-IvinsWsl([string]$WslCommand, [string]$Operation) {
 function Assert-IvinsInstalledRuntime {
     $command = @'
 set -e
-test "$(dpkg --print-architecture)" = amd64
+test "$(dpkg --print-architecture)" = amd64 || { echo 'IVINS_RUNTIME_CHECK_FAIL architecture' >&2; exit 1; }
 . /etc/os-release
-test "$ID" = ubuntu
-test "$VERSION_ID" = 24.04
-test "$(cat /etc/ivins/newsim-platform)" = newsim-cosys
-grep -Eq '^[A-Za-z0-9._-]{8,128}$' /etc/ivins/newsim-instance-id
-test "$(stat -c '%U:%G:%a' /etc/ivins/newsim-platform)" = root:root:444
-test "$(stat -c '%U:%G:%a' /etc/ivins/newsim-instance-id)" = root:root:444
-test -x /usr/sbin/ivins-installer
-test -x /usr/share/ivins/newsim-preflight.sh
-test -r /usr/share/doc/ivins/release-manifest.json
+grep -Eq '^ID=ubuntu$' /etc/os-release || { echo 'IVINS_RUNTIME_CHECK_FAIL distribution' >&2; exit 1; }
+grep -Eq '^VERSION_ID="?24\.04"?$' /etc/os-release || { echo 'IVINS_RUNTIME_CHECK_FAIL release' >&2; exit 1; }
+test "$(cat /etc/ivins/newsim-platform)" = newsim-cosys || { echo 'IVINS_RUNTIME_CHECK_FAIL platform-marker' >&2; exit 1; }
+grep -Eq '^[A-Za-z0-9._-]{8,128}$' /etc/ivins/newsim-instance-id || { echo 'IVINS_RUNTIME_CHECK_FAIL instance-id' >&2; exit 1; }
+test "$(stat -c '%U:%G:%a' /etc/ivins/newsim-platform)" = root:root:444 || { echo 'IVINS_RUNTIME_CHECK_FAIL platform-marker-permissions' >&2; exit 1; }
+test "$(stat -c '%U:%G:%a' /etc/ivins/newsim-instance-id)" = root:root:444 || { echo 'IVINS_RUNTIME_CHECK_FAIL instance-id-permissions' >&2; exit 1; }
+test -x /usr/sbin/ivins-installer || { echo 'IVINS_RUNTIME_MISSING /usr/sbin/ivins-installer' >&2; exit 1; }
+test -x /usr/share/ivins/newsim-preflight.sh || { echo 'IVINS_RUNTIME_MISSING /usr/share/ivins/newsim-preflight.sh' >&2; exit 1; }
+test -r /usr/share/doc/ivins/release-manifest.json || { echo 'IVINS_RUNTIME_MISSING /usr/share/doc/ivins/release-manifest.json' >&2; exit 1; }
 python3 - /usr/share/doc/ivins/release-manifest.json <<'PY'
 import json
 import sys
@@ -84,10 +84,10 @@ assert manifest["supported_platforms"] == ["ubuntu24-amd64-newsim"]
 assert manifest["compatibility"]["environment"]["production_authorized"] is False
 PY
 /usr/share/ivins/newsim-preflight.sh
-test -r /opt/iros2j/setup.bash
-test -r /opt/imavros/setup.bash
-test -r /opt/vins/setup.bash
-test -r /opt/vio_stack/current/local_setup.bash
+test -r /opt/iros2j/setup.bash || { echo 'IVINS_RUNTIME_MISSING /opt/iros2j/setup.bash' >&2; exit 1; }
+test -r /opt/imavros/setup.bash || { echo 'IVINS_RUNTIME_MISSING /opt/imavros/setup.bash' >&2; exit 1; }
+test -r /opt/vins/setup.bash || { echo 'IVINS_RUNTIME_MISSING /opt/vins/setup.bash' >&2; exit 1; }
+test -r /opt/vio_stack/current/local_setup.bash || { echo 'IVINS_RUNTIME_MISSING /opt/vio_stack/current/local_setup.bash' >&2; exit 1; }
 dpkg-query -W -f='${Package}=${Version} ${Architecture} ${db:Status-Status}\n' \
   ivins ivins-installer-agent iros2j-ros-core imavros vins-mono-ros2 vio-stack
 '@
@@ -571,6 +571,11 @@ function Invoke-Build {
     $sdk = if ($sdkRoot) { Join-Path $sdkRoot 'Lib\10.0.22621.0\um\x64\kernel32.lib' } else { '' }
     if (-not (Test-Path -LiteralPath $sdk)) { throw 'Windows SDK 10.0.22621.0 is missing. Run doctor.' }
 
+    if ($IvinsRuntime -eq 'installed') {
+        Write-Step 'Verifying the official installed IVINS DEV runtime before native builds'
+        Assert-IvinsInstalledRuntime
+    }
+
     Write-Step "Building Cosys-AirSim 3.4.1 with MSVC $compilerVersion (layout $msvc)"
     $vsDevCmd = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
     $cosys = Join-Path $script:RepoRoot 'third_party\Cosys-AirSim'
@@ -608,8 +613,6 @@ function Invoke-Build {
     Invoke-Wsl -Command "cd '$ardupilot' && source ~/venv-ardupilot/bin/activate && ./waf configure --board sitl && ./waf copter" | Out-Null
 
     if ($IvinsRuntime -eq 'installed') {
-        Write-Step 'Verifying the official installed IVINS DEV runtime'
-        Assert-IvinsInstalledRuntime
         Write-Step 'Building only the NewSIM adapter overlay against installed IVINS packages'
     } else {
         Write-Step 'Building the pinned ROS 2 VINS/iMAVROS/vio_stack source overlay'

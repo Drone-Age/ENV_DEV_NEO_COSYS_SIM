@@ -31,6 +31,17 @@ class IvinsDevContractTests(unittest.TestCase):
         self.assertNotIn("third_party/iMAVROS", installed)
         self.assertNotIn("third_party/vio_stack", installed)
 
+    def test_installed_runtime_gate_precedes_expensive_native_builds(self):
+        command = (ROOT / "scripts" / "dev-command.ps1").read_text(encoding="utf-8")
+        build = command.split("function Invoke-Build", 1)[1].split(
+            "function Start-VinsStack", 1
+        )[0]
+        self.assertLess(
+            build.index("Assert-IvinsInstalledRuntime"),
+            build.index("Building Cosys-AirSim"),
+        )
+        self.assertIn("IVINS_RUNTIME_MISSING /usr/sbin/ivins-installer", command)
+
     def test_installed_runtime_requires_exact_newsim_product_manifest(self):
         command = (ROOT / "scripts" / "dev-command.ps1").read_text(encoding="utf-8")
         installed = command.split("function Assert-IvinsInstalledRuntime", 1)[1].split(
@@ -104,6 +115,13 @@ class IvinsDevContractTests(unittest.TestCase):
         self.assertIn('$bootstrap.Replace("`r`n", "`n").Replace("`r", "`n")', setup)
         self.assertIn("bash -lc $bootstrapLf", setup)
         self.assertNotIn("bash -lc $bootstrap\n", setup)
+
+        common = (ROOT / "scripts" / "common.ps1").read_text(encoding="utf-8")
+        invoke_wsl = common.split("function Invoke-Wsl", 1)[1].split(
+            "function Convert-ToWslPath", 1
+        )[0]
+        self.assertIn('$Command.Replace("`r`n", "`n").Replace("`r", "`n")', invoke_wsl)
+        self.assertIn("bash -lc $commandLf", invoke_wsl)
 
     def test_builtin_environment_does_not_require_a_submodule_property(self):
         common = (ROOT / "scripts" / "common.ps1").read_text(encoding="utf-8")
