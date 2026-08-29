@@ -40,6 +40,49 @@ function Test-PortFree([int]$Port) {
     return -not ($tcp -or $udp)
 }
 
+function Get-HostFirewallContractProblems([string]$UnrealEditor, [int]$ControlPort, [int]$SensorPort) {
+    $problems = [Collections.Generic.List[string]]::new()
+    try {
+        $classicRules = @(Get-NetFirewallRule -DisplayName 'INDRA Cosys UE UDP 9022' -ErrorAction Stop)
+        if ($classicRules.Count -ne 1) { throw "expected one classic rule, found $($classicRules.Count)" }
+        $classic = $classicRules[0]
+        $application = $classic | Get-NetFirewallApplicationFilter -ErrorAction Stop
+        $port = $classic | Get-NetFirewallPortFilter -ErrorAction Stop
+        if ($classic.Enabled.ToString() -ne 'True' -or $classic.Direction.ToString() -ne 'Inbound' -or $classic.Action.ToString() -ne 'Allow' -or $classic.Profile.ToString() -ne 'Any') {
+            $problems.Add('UDP 9022 rule is disabled or is not inbound/allow on every profile')
+        }
+        if ([string]$application.Program -ine [IO.Path]::GetFullPath($UnrealEditor)) {
+            $problems.Add('UDP 9022 rule is not scoped to the discovered UnrealEditor.exe')
+        }
+        if ($port.Protocol.ToString() -ne 'UDP' -or [string]$port.LocalPort -ne [string]$ControlPort) {
+            $problems.Add("Unreal rule is not UDP $ControlPort")
+        }
+    } catch {
+        $problems.Add('exact UnrealEditor inbound UDP 9022 rule is missing or unreadable')
+    }
+
+    try {
+        $hyperVRules = @(Get-NetFirewallHyperVRule -DisplayName 'INDRA Cosys SITL UDP 9023' -ErrorAction Stop)
+        if ($hyperVRules.Count -ne 1) { throw "expected one Hyper-V rule, found $($hyperVRules.Count)" }
+        $hyperV = $hyperVRules[0]
+        if ($hyperV.Enabled.ToString() -ne 'True' -or $hyperV.Direction.ToString() -ne 'Inbound' -or $hyperV.Action.ToString() -ne 'Allow' -or $hyperV.Profiles.ToString() -ne 'Any') {
+            $problems.Add('WSL UDP 9023 rule is disabled or is not inbound/allow on every profile')
+        }
+        if ($hyperV.Protocol.ToString() -ne 'UDP' -or [string]$hyperV.LocalPorts -ne [string]$SensorPort) {
+            $problems.Add("WSL rule is not UDP $SensorPort")
+        }
+        if ([string]$hyperV.RemoteAddresses -ne 'LocalSubnet4') {
+            $problems.Add('WSL UDP 9023 rule is not limited to LocalSubnet4')
+        }
+        if ([string]$hyperV.VMCreatorId -ne '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}') {
+            $problems.Add('WSL UDP 9023 rule has the wrong VM creator scope')
+        }
+    } catch {
+        $problems.Add('exact WSL LocalSubnet4 inbound UDP 9023 rule is missing or unreadable')
+    }
+    return @($problems)
+}
+
 function Invoke-IvinsWsl([string]$WslCommand, [string]$Operation) {
     $result = Invoke-Wsl -Command $WslCommand -AllowFailure
     $result.Output | ForEach-Object { Write-Host $_ }
@@ -445,6 +488,21 @@ function Invoke-Doctor {
         if (Test-PortFree $port) { Write-Pass "Port $port" 'available' } else { Write-Fail "Port $port" 'already in use'; $failures++ }
     }
 
+    if ($ue) {
+        $firewallArguments = @{
+            UnrealEditor = Join-Path $ue 'Engine\Binaries\Win64\UnrealEditor.exe'
+            ControlPort = $script:Config.ports.cosys_control_udp
+            SensorPort = $script:Config.ports.sitl_sensor_udp
+        }
+        $firewallProblems = @(Get-HostFirewallContractProblems @firewallArguments)
+        if ($firewallProblems.Count -eq 0) {
+            Write-Pass 'Host/WSL firewalls' 'exact Unreal UDP 9022 and WSL LocalSubnet4 UDP 9023 rules'
+        } else {
+            Write-Fail 'Host/WSL firewalls' ($firewallProblems -join '; ')
+            $failures++
+        }
+    }
+
     $mp = Join-Path $script:RuntimeRoot "tools\mission-planner-$($script:Lock.mission_planner.version)\MissionPlanner.exe"
     if (Test-Path -LiteralPath $mp) { Write-Pass 'Mission Planner' $script:Lock.mission_planner.version } else { Write-Warn 'Mission Planner' 'not staged yet; setup will download it' }
     if ($failures) { Write-Host "`nDoctor found $failures blocking issue(s)." -ForegroundColor Red; return 1 }
@@ -555,7 +613,14 @@ function Invoke-Setup {
     if ($ue) {
         try {
             & (Join-Path $PSScriptRoot 'configure-firewall.ps1') -UnrealEditor (Join-Path $ue 'Engine\Binaries\Win64\UnrealEditor.exe') -ControlPort $script:Config.ports.cosys_control_udp -SensorPort $script:Config.ports.sitl_sensor_udp
-            Write-Pass 'Host/WSL firewalls' 'Unreal UDP 9022 and WSL SITL UDP 9023 only'
+            $firewallArguments = @{
+                UnrealEditor = Join-Path $ue 'Engine\Binaries\Win64\UnrealEditor.exe'
+                ControlPort = $script:Config.ports.cosys_control_udp
+                SensorPort = $script:Config.ports.sitl_sensor_udp
+            }
+            $firewallProblems = @(Get-HostFirewallContractProblems @firewallArguments)
+            if ($firewallProblems.Count -ne 0) { throw ($firewallProblems -join '; ') }
+            Write-Pass 'Host/WSL firewalls' 'exact Unreal UDP 9022 and WSL LocalSubnet4 UDP 9023 rules'
         } catch { Write-Warn 'Host/WSL firewalls' 'run setup once from an elevated PowerShell to add the two narrow UDP rules' }
     }
 }

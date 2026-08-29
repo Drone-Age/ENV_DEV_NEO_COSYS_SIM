@@ -147,6 +147,31 @@ class IvinsDevContractTests(unittest.TestCase):
             line = next(line for line in firewall.splitlines() if command in line)
             self.assertIn("-ErrorAction Stop", line)
 
+    def test_doctor_requires_exact_narrow_firewall_contract(self):
+        command = (ROOT / "scripts" / "dev-command.ps1").read_text(
+            encoding="utf-8"
+        )
+        verifier = command.split("function Get-HostFirewallContractProblems", 1)[
+            1
+        ].split("function Invoke-IvinsWsl", 1)[0]
+        doctor = command.split("function Invoke-Doctor", 1)[1].split(
+            "function Invoke-Setup", 1
+        )[0]
+        setup = command.split("function Invoke-Setup", 1)[1].split(
+            "function Invoke-Build", 1
+        )[0]
+        for required in (
+            "INDRA Cosys UE UDP 9022",
+            "INDRA Cosys SITL UDP 9023",
+            "LocalSubnet4",
+            "{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}",
+        ):
+            self.assertIn(required, verifier)
+        self.assertIn("Get-HostFirewallContractProblems", doctor)
+        self.assertIn("Write-Fail 'Host/WSL firewalls'", doctor)
+        self.assertIn("Get-HostFirewallContractProblems", setup)
+        self.assertIn("if ($firewallProblems.Count -ne 0)", setup)
+
 
 if __name__ == "__main__":
     unittest.main()
