@@ -12,6 +12,11 @@ NewSIM використовує підписану матрицю IVINS для U
 застарілу compatibility-бібліотеку `IHUB_SIM_BRIDGE`; та залишається лише для
 явного source-development fallback.
 
+`ivins doctor` приймає лише точний підписаний schema-4 manifest IVINS 3.1.0.0
+для `ubuntu24-amd64-newsim`, після чого запускає пакетний NewSIM preflight.
+Preflight перевіряє версії всіх зафіксованих Debian-пакетів і відхиляє
+Raspberry Pi production-entrypoints або `iboot-kalibr`.
+
 `-IvinsRuntime source` є явним fallback для розробки компонентів. Його прогони
 не можуть бути офіційним evidence enrollment, delivery, update чи IVINS
 release.

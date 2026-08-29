@@ -31,6 +31,26 @@ class IvinsDevContractTests(unittest.TestCase):
         self.assertNotIn("third_party/iMAVROS", installed)
         self.assertNotIn("third_party/vio_stack", installed)
 
+    def test_installed_runtime_requires_exact_newsim_product_manifest(self):
+        command = (ROOT / "scripts" / "dev-command.ps1").read_text(encoding="utf-8")
+        installed = command.split("function Assert-IvinsInstalledRuntime", 1)[1].split(
+            "function Invoke-IvinsManagement", 1
+        )[0]
+        for contract in (
+            "/usr/share/doc/ivins/release-manifest.json",
+            "/usr/share/ivins/newsim-preflight.sh",
+            'manifest["schema_version"] == 4',
+            'manifest["release"]["version"] == "3.1.0.0"',
+            'manifest["release"]["debian_version"] == "3.1.0.0-1+noble"',
+            'manifest["supported_platforms"] == ["ubuntu24-amd64-newsim"]',
+            'production_authorized"] is False',
+        ):
+            self.assertIn(contract, installed)
+        self.assertLess(
+            installed.index("/usr/share/ivins/newsim-preflight.sh"),
+            installed.index("dpkg-query"),
+        )
+
     def test_enrollment_secret_is_file_only_and_official_https(self):
         command = (ROOT / "scripts" / "dev-command.ps1").read_text(encoding="utf-8")
         management = command.split("function Invoke-IvinsManagement", 1)[1].split("function", 1)[0]

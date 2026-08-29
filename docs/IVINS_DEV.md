@@ -11,6 +11,11 @@ camera pitch convention explicitly at `+1.0`. It neither loads nor accepts the
 legacy `IHUB_SIM_BRIDGE` compatibility library. That library remains limited to
 the explicit source-development fallback.
 
+`ivins doctor` accepts only the exact signed IVINS 3.1.0.0 schema-4 manifest
+for `ubuntu24-amd64-newsim`, then runs the package-owned NewSIM preflight. The
+preflight verifies every pinned Debian package version and rejects Raspberry
+Pi production entrypoints or `iboot-kalibr`.
+
 `-IvinsRuntime source` is an explicit component-development fallback. Its runs
 cannot serve as official enrollment, delivery, update, or IVINS release
 evidence.

@@ -60,6 +60,30 @@ grep -Eq '^[A-Za-z0-9._-]{8,128}$' /etc/ivins/newsim-instance-id
 test "$(stat -c '%U:%G:%a' /etc/ivins/newsim-platform)" = root:root:444
 test "$(stat -c '%U:%G:%a' /etc/ivins/newsim-instance-id)" = root:root:444
 test -x /usr/sbin/ivins-installer
+test -x /usr/share/ivins/newsim-preflight.sh
+test -r /usr/share/doc/ivins/release-manifest.json
+python3 - /usr/share/doc/ivins/release-manifest.json <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+assert manifest["schema_version"] == 4
+assert manifest["release"]["version"] == "3.1.0.0"
+assert manifest["release"]["debian_version"] == "3.1.0.0-1+noble"
+assert manifest["platform"] == {
+    "distribution": "ubuntu",
+    "release": "24.04",
+    "codename": "noble",
+    "architecture": "amd64",
+    "native_machine": "x86_64",
+    "device": "NewSIM Cosys",
+    "ros_distribution": "jazzy",
+    "role": "DEV-only",
+}
+assert manifest["supported_platforms"] == ["ubuntu24-amd64-newsim"]
+assert manifest["compatibility"]["environment"]["production_authorized"] is False
+PY
+/usr/share/ivins/newsim-preflight.sh
 test -r /opt/iros2j/setup.bash
 test -r /opt/imavros/setup.bash
 test -r /opt/vins/setup.bash
