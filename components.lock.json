@@ -26,7 +26,7 @@
     "third_party/VINS-NEO": {
       "url": "https://github.com/Drone-Age/VINS-NEO.git",
       "branch": "indra-sim2-compat",
-      "commit": "0c09aecfebbe7b6bcdd55a3697aef6ba76ececc1",
+      "commit": "a0fb73bc5be5a9a1531dbeb03338cad6d93d8fda",
       "role": "SIM2-calibrated VINS estimator and feature tracker"
     },
     "third_party/iMAVROS": {
@@ -37,10 +37,10 @@
     "third_party/vio_stack": {
       "url": "https://github.com/Drone-Age/vio_stack.git",
       "branch": "indra-sim2-compat",
-      "commit": "eb2cc542a0457759b208c27d324556c80cf6a1b6",
+      "commit": "2607f0f70516c8cea689e920d53c1f05edc30f6e",
       "role": "SIM2 iCAM/iIMU/iHUB, VINS initializer and vision bridge",
       "nested_submodules": {
-        "src/actuators/iHUB": "12b249a8d1bb711639997d6b354794a76958177f",
+        "src/actuators/iHUB": "08d8fa3bc57dfe2120e8c967af33979586ddf8c3",
         "src/actuators/iHUB/firmware/iHUB-STM": "c2186b7e4d0caff9defbbaa18a9d19b9fed01a75",
         "src/sensors/iCAM": "d2faa3cdd2d1c82209dee6480a097db47f4a1477",
         "src/sensors/iIMU": "872d6fa47ca5ff86a5b389c3ff8d1a790a98f815"

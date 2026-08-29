@@ -101,10 +101,7 @@ def generate_launch_description():
                 "ros2", "run", "ihub", "ihub-server-sim",
                 "--device", server_device,
                 "--flash", LaunchConfiguration("ihub_flash_path"),
-                "--cosys-host", LaunchConfiguration("cosys_host"),
-                "--cosys-port", LaunchConfiguration("cosys_port"),
-                "--cosys-camera", LaunchConfiguration("cosys_camera"),
-                "--cosys-vehicle", LaunchConfiguration("cosys_vehicle"),
+                "--no-gazebo",
             ],
             name="ihub_server_sim",
             output="screen",
@@ -151,9 +148,30 @@ def generate_launch_description():
                     "ihub.recalibrate_service": "/camera/tilt/recalibrate",
                     "ihub.handshake_timeout_s": 180.0,
                     "ihub.calibration_timeout_s": 180.0,
+                    # A persisted flash record is useful operationally but is
+                    # not evidence of a sweep performed in this immutable run.
+                    "ihub.require_session_calibration": True,
+                    # The external iHUB calibration proves the complete 0..90
+                    # degree range before arming.  Preposition forward at 0
+                    # degrees so Blocks keeps stable vertical features,
+                    # restart VINS, and then keep the camera/IMU pair rigid while
+                    # aircraft translation supplies metric scale.  Moving the
+                    # mount during the solve would mix the 25 Hz RPC camera-pose
+                    # actuator with the 200 Hz IMU history and is not acceptable
+                    # evidence of a calibrated physical sensor pair.
+                    "motion.sine_enabled": False,
+                    "motion.verification_sine_enabled": False,
+                    "motion.require_reference_motion": True,
+                    "motion.minimum_reference_motion_m": 0.5,
+                    "motion.lower_angle_rad": 0.0,
+                    "motion.upper_angle_rad": 1.5707963267948966,
+                    "motion.final_angle_rad": 0.0,
                     "motion.initialization_timeout_s": 180.0,
                     "vins.maximum_solver_attempts": 40,
+                    "vins.minimum_imu_excitation": 0.08,
+                    "vins.maximum_gyroscope_bias_rad_s": 0.05,
                     "vins.odometry_topic": "/vins_estimator/odometry",
+                    "vins.reference_odometry_topic": "/sim/ground_truth/odom",
                     "status.topic": "/vio/initialization/status",
                 }],
             )],

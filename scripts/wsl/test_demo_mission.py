@@ -3,7 +3,14 @@
 import os
 import socket
 
-from demo_mission import assert_process_alive, build_square_mission, recv_match_checked
+from demo_mission import (
+    assert_process_alive,
+    build_square_mission,
+    command_ground_speed,
+    read_parameter,
+    recv_match_checked,
+    validate_optional_ground_speed,
+)
 from pymavlink import mavutil
 import pytest
 
@@ -48,6 +55,30 @@ def test_vins_vertical_excitation_alternates_real_waypoint_altitudes() -> None:
     ]
 
 
+def test_vins_fixed_yaw_keeps_all_flown_items_north_facing() -> None:
+    mission = build_square_mission(
+        50.318239,
+        31.1372453,
+        takeoff_m=5.0,
+        side_m=15.0,
+        laps=2,
+        fixed_yaw_deg=1.0,
+    )
+    assert all(item["p4"] == 1.0 for item in mission[1:])
+
+
+@pytest.mark.parametrize("fixed_yaw_deg", [-0.1, 360.0, float("nan"), float("inf")])
+def test_invalid_fixed_yaw_is_rejected(fixed_yaw_deg) -> None:
+    with pytest.raises(ValueError, match="fixed_yaw_deg"):
+        build_square_mission(
+            50.318239,
+            31.1372453,
+            takeoff_m=5.0,
+            side_m=15.0,
+            fixed_yaw_deg=fixed_yaw_deg,
+        )
+
+
 @pytest.mark.parametrize("laps", [0, -1, True, 1.5])
 def test_invalid_lap_count_is_rejected(laps) -> None:
     with pytest.raises(ValueError, match="laps"):
@@ -70,6 +101,55 @@ def test_invalid_altitude_step_is_rejected(altitude_step_m) -> None:
             side_m=15.0,
             altitude_step_m=altitude_step_m,
         )
+
+
+@pytest.mark.parametrize("speed", [0.0, 0.75, 2.0])
+def test_optional_ground_speed_accepts_disabled_or_positive_values(speed) -> None:
+    assert validate_optional_ground_speed(speed, "test_speed") == speed
+
+
+@pytest.mark.parametrize("speed", [-0.1, float("nan"), float("inf")])
+def test_optional_ground_speed_rejects_invalid_values(speed) -> None:
+    with pytest.raises(ValueError, match="test_speed"):
+        validate_optional_ground_speed(speed, "test_speed")
+
+
+def test_ground_speed_command_uses_mavlink_ground_speed_semantics(monkeypatch) -> None:
+    calls = []
+
+    def fake_send(master, command, params, timeout):
+        calls.append((master, command, params, timeout))
+        return object(), []
+
+    monkeypatch.setattr("demo_mission.send_command", fake_send)
+    command_ground_speed("master", 0.75, timeout=9.0)
+    assert calls == [(
+        "master",
+        mavutil.mavlink.MAV_CMD_DO_CHANGE_SPEED,
+        [1.0, 0.75, -1.0, 0.0],
+        9.0,
+    )]
+
+
+def test_parameter_read_is_name_checked(monkeypatch) -> None:
+    requests = []
+
+    class FakeMav:
+        def param_request_read_send(self, system, component, name, index):
+            requests.append((system, component, name, index))
+
+    class FakeMaster:
+        target_system = 1
+        target_component = 2
+        mav = FakeMav()
+
+    class Message:
+        param_id = "WP_YAW_BEHAVIOR"
+        param_value = 0.0
+
+    monkeypatch.setattr("demo_mission.wait_message", lambda *args: Message())
+    assert read_parameter(FakeMaster(), "WP_YAW_BEHAVIOR") == 0.0
+    assert requests == [(1, 2, b"WP_YAW_BEHAVIOR", -1)]
 
 
 def test_current_process_is_accepted_as_live(tmp_path) -> None:

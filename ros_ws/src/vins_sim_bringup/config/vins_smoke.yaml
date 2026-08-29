@@ -37,7 +37,11 @@ extrinsicTranslation: !!opencv-matrix
 
 max_cnt: 260
 min_dist: 20
-freq: 20
+# Keep the camera producer/publication contract at 30/25 Hz, but feed the
+# ten-frame VINS initialization window at 10 Hz.  This gives the rigid,
+# stabilized camera a full second of translational baseline without weakening
+# VINS-NEO's 30 px relative-pose threshold.
+freq: 10
 F_threshold: 1.0
 show_track: 1
 equalize: 1

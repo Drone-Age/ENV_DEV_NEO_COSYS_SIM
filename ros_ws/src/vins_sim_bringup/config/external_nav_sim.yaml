@@ -14,14 +14,18 @@ vision_bridge:
     camera_hinge_pivot_xyz: [0.10, 0.0, 0.04]
     camera_sensor_offset_xyz: [0.10, 0.0, 0.0]
     camera_mount_zero_rpy: [0.0, 0.0, 0.0]
-    camera_alignment_angle_rad: 0.7853981633974483
+    # Keep the ExternalNav alignment pose identical to the NewSIM initializer's
+    # forward-looking final pose. Production/default vision_bridge remains 45 deg.
+    camera_alignment_angle_rad: 0.0
     camera_alignment_angle_tolerance_rad: 0.05235987755982989
     camera_alignment_max_rate_rad_s: 0.03490658503988659
 
     alignment_confirmed: false
     alignment_translation_xyz: [0.0, 0.0, 0.0]
     alignment_yaw_deg: 0.0
-    alignment_reference_topic: "/mavros/local_position/odom"
+    # SITL exposes MAVROS local-position topic names without publishing data.
+    # Ground truth is used only to freeze the one-shot DEV frame transform.
+    alignment_reference_topic: "/sim/ground_truth/odom"
     alignment_enable_topic: "/sim/qualification/external_nav_alignment_enable"
     alignment_admission_topic: "/sim/qualification/external_nav_alignment_admission"
     alignment_reference_max_age_s: 0.25
@@ -38,8 +42,8 @@ vision_bridge:
     default_position_variance_m2: 0.25
     confidence_feature_topic: "/feature_tracker/feature"
     confidence_feature_timeout_s: 0.5
-    confidence_altitude_topic: "/mavros/local_position/pose"
-    confidence_altitude_source_type: "pose_z"
+    confidence_altitude_topic: "/sim/ground_truth/odom"
+    confidence_altitude_source_type: "odometry_z_abs"
     confidence_altitude_timeout_s: 1.0
     confidence_reference_altitude_m: 25.0
     confidence_camera_focal_length_px: 502.299385

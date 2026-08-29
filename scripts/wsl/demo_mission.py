@@ -69,6 +69,7 @@ def build_square_mission(
     side_m: float,
     laps: int = 1,
     altitude_step_m: float = 0.0,
+    fixed_yaw_deg: float | None = None,
 ) -> list[dict]:
     """Build a home-relative square mission with optional vertical excitation."""
 
@@ -77,6 +78,10 @@ def build_square_mission(
     altitude_step_m = float(altitude_step_m)
     if not math.isfinite(altitude_step_m) or altitude_step_m < 0.0:
         raise ValueError("altitude_step_m must be finite and >= 0")
+    if fixed_yaw_deg is not None:
+        fixed_yaw_deg = float(fixed_yaw_deg)
+        if not math.isfinite(fixed_yaw_deg) or not 0.0 <= fixed_yaw_deg < 360.0:
+            raise ValueError("fixed_yaw_deg must be finite in [0, 360)")
     offsets = [
         (side_m, 0.0),
         (side_m, side_m),
@@ -104,6 +109,7 @@ def build_square_mission(
             "lon": route_lon,
             "rel_alt": takeoff_m,
             "p1": 0.0,
+            **({"p4": fixed_yaw_deg} if fixed_yaw_deg is not None else {}),
         },
     ]
     for _ in range(laps):
@@ -119,6 +125,7 @@ def build_square_mission(
                 "rel_alt": takeoff_m + (altitude_step_m if index % 2 == 0 else 0.0),
                 "p1": 1.0,
                 "p2": 2.0,
+                **({"p4": fixed_yaw_deg} if fixed_yaw_deg is not None else {}),
             }
             for index, (lat, lon) in enumerate(coordinates)
         )
@@ -128,6 +135,7 @@ def build_square_mission(
             "lat": route_lat,
             "lon": route_lon,
             "rel_alt": 0.0,
+            **({"p4": fixed_yaw_deg} if fixed_yaw_deg is not None else {}),
         }
     )
     return mission
@@ -170,6 +178,25 @@ def send_command(master, command: int, params=None, timeout: float = 15.0):
     return ack, status_texts
 
 
+def validate_optional_ground_speed(value: float, name: str) -> float:
+    speed = float(value)
+    if not math.isfinite(speed) or speed < 0.0:
+        raise ValueError(f"{name} must be finite and >= 0")
+    return speed
+
+
+def command_ground_speed(master, speed_m_s: float, timeout: float = 15.0):
+    speed = validate_optional_ground_speed(speed_m_s, "ground speed")
+    if speed <= 0.0:
+        raise ValueError("ground speed command must be > 0")
+    return send_command(
+        master,
+        mavutil.mavlink.MAV_CMD_DO_CHANGE_SPEED,
+        [1.0, speed, -1.0, 0.0],
+        timeout=timeout,
+    )
+
+
 def request_message_interval(master, message_id: int, interval_us: int) -> None:
     master.mav.command_long_send(
         master.target_system,
@@ -184,6 +211,33 @@ def request_message_interval(master, message_id: int, interval_us: int) -> None:
         0,
         0,
     )
+
+
+def read_parameter(master, name: str, timeout: float = 10.0) -> float:
+    encoded = name.encode("ascii")
+    master.mav.param_request_read_send(
+        master.target_system,
+        master.target_component,
+        encoded,
+        -1,
+    )
+
+    def matches(message) -> bool:
+        param_id = message.param_id
+        if isinstance(param_id, bytes):
+            param_id = param_id.decode("ascii", errors="replace")
+        return str(param_id).rstrip("\x00") == name
+
+    message = wait_message(
+        master,
+        "PARAM_VALUE",
+        time.monotonic() + timeout,
+        matches,
+    )
+    value = float(message.param_value)
+    if not math.isfinite(value):
+        raise RuntimeError(f"parameter {name} is not finite")
+    return value
 
 
 def set_mode_verified(master, mode_name: str, timeout: float = 20.0):
@@ -265,6 +319,16 @@ def run(args) -> dict:
     output_path = pathlib.Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     events = []
+    initial_ground_speed = validate_optional_ground_speed(
+        args.initial_ground_speed, "initial_ground_speed"
+    )
+    cruise_ground_speed = validate_optional_ground_speed(
+        args.cruise_ground_speed, "cruise_ground_speed"
+    )
+    if bool(initial_ground_speed) != bool(cruise_ground_speed):
+        raise ValueError(
+            "initial_ground_speed and cruise_ground_speed must be enabled together"
+        )
     gates = {
         "mavlink_heartbeat": False,
         "sensor_exchange": False,
@@ -376,6 +440,15 @@ def run(args) -> dict:
     )
     event("gps_ready", fix_type=int(gps.fix_type), satellites=int(gps.satellites_visible))
 
+    if args.required_wp_yaw_behavior is not None:
+        yaw_behavior = read_parameter(master, "WP_YAW_BEHAVIOR")
+        if abs(yaw_behavior - args.required_wp_yaw_behavior) > 1.0e-6:
+            raise RuntimeError(
+                "WP_YAW_BEHAVIOR does not match the required qualification value: "
+                f"actual={yaw_behavior} required={args.required_wp_yaw_behavior}"
+            )
+        event("wp_yaw_behavior_verified", value=yaw_behavior)
+
     prearm = wait_message(
         master,
         "SYS_STATUS",
@@ -407,6 +480,7 @@ def run(args) -> dict:
         side_m=args.side,
         laps=args.laps,
         altitude_step_m=args.altitude_step,
+        fixed_yaw_deg=args.fixed_yaw_deg,
     )
     required_reached = set(range(1, len(mission) - 1))
     (output_path.parent / "mission.json").write_text(json.dumps(mission, indent=2), encoding="utf-8")
@@ -416,6 +490,7 @@ def run(args) -> dict:
         items=len(mission),
         laps=args.laps,
         altitude_step_m=args.altitude_step,
+        fixed_yaw_deg=args.fixed_yaw_deg,
     )
 
     _, prearm_messages = send_command(master, mavutil.mavlink.MAV_CMD_RUN_PREARM_CHECKS)
@@ -461,6 +536,16 @@ def run(args) -> dict:
     gates["position_ready"] = True
     event("armed")
 
+    speed_restore_pending = False
+    if initial_ground_speed > 0.0:
+        _, speed_messages = command_ground_speed(master, initial_ground_speed)
+        speed_restore_pending = True
+        event(
+            "initial_ground_speed_commanded",
+            speed_m_s=initial_ground_speed,
+            messages=speed_messages,
+        )
+
     _, _, auto_messages = set_mode_verified(master, "AUTO")
     event("auto_started", messages=auto_messages)
     # In a GCS-only launch the RC throttle remains at minimum. Explicitly start
@@ -490,6 +575,14 @@ def run(args) -> dict:
         elif msg_type == "MISSION_ITEM_REACHED":
             reached.add(int(msg.seq))
             event("mission_item_reached", seq=int(msg.seq))
+            if speed_restore_pending and int(msg.seq) >= 2:
+                _, speed_messages = command_ground_speed(master, cruise_ground_speed)
+                speed_restore_pending = False
+                event(
+                    "cruise_ground_speed_restored",
+                    speed_m_s=cruise_ground_speed,
+                    messages=speed_messages,
+                )
         elif msg_type == "STATUSTEXT":
             event("statustext", severity=int(msg.severity), text=str(msg.text))
         elif msg_type == "HEARTBEAT" and not (msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED):
@@ -531,6 +624,10 @@ def main() -> int:
     parser.add_argument("--side", type=float, default=15.0)
     parser.add_argument("--laps", type=int, default=1)
     parser.add_argument("--altitude-step", type=float, default=0.0)
+    parser.add_argument("--fixed-yaw-deg", type=float)
+    parser.add_argument("--required-wp-yaw-behavior", type=float)
+    parser.add_argument("--initial-ground-speed", type=float, default=0.0)
+    parser.add_argument("--cruise-ground-speed", type=float, default=0.0)
     parser.add_argument("--timeout", type=int, default=240)
     args = parser.parse_args()
     output = pathlib.Path(args.output)

@@ -8,9 +8,10 @@
     "width": 640,
     "height": 480,
     "producer_hz": 30.0,
-    "published_hz": 25.0,
+    "published_hz": 20.0,
     "frame_id": "camera_link",
     "encoding": "rgb8",
+    "gimbal_pitch_sign": -1.0,
     "distortion_model": "plumb_bob",
     "k": [502.299385, 0.0, 320.0, 0.0, 502.299385, 240.0, 0.0, 0.0, 1.0],
     "d": [0.0, 0.0, 0.0, 0.0, 0.0]
@@ -19,15 +20,19 @@
     "name": "BodyImu",
     "frame_id": "imu_link",
     "nominal_hz": 200.0,
-    "wall_budget_hz": 196.0,
-    "batch_poll_hz": 50.0
+    "wall_budget_hz": 194.0,
+    "batch_poll_hz": 50.0,
+    "max_angular_velocity_rad_s": 35.0,
+    "max_linear_acceleration_m_s2": 200.0
   },
   "camera_imu": {
     "name": "CameraImu",
     "frame_id": "camera_imu_link",
     "nominal_hz": 200.0,
-    "wall_budget_hz": 196.0,
+    "wall_budget_hz": 194.0,
     "batch_poll_hz": 50.0,
+    "max_angular_velocity_rad_s": 35.0,
+    "max_linear_acceleration_m_s2": 200.0,
     "mounting": "ihub-pitched",
     "gimbal_default_angle_rad": 0.0
   },

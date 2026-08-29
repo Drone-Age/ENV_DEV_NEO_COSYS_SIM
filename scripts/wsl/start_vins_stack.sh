@@ -14,7 +14,8 @@ mavlink_port=$5
 domain_id=$6
 timeout_s=$7
 vins_dir="$run_dir/vins"
-overlay="$repo_root/.runtime/vins-overlay-jazzy/install/setup.bash"
+overlay_root="${INDRA_VINS_RUNTIME_ROOT:-$HOME/.local/share/indra-cosys}/vins-overlay-jazzy"
+overlay="$overlay_root/install/setup.bash"
 mkdir -p "$vins_dir" /tmp/indra-cosys-ihub
 
 if [[ -f /opt/ros/jazzy/setup.bash ]]; then
@@ -40,7 +41,7 @@ set -u
 export ROS_DOMAIN_ID="$domain_id"
 rpc_site="$($HOME/venv-ardupilot/bin/python3 -c 'import site; print(site.getsitepackages()[0])')"
 export PYTHONPATH="$repo_root/third_party/Cosys-AirSim/PythonClient:$rpc_site${PYTHONPATH:+:$PYTHONPATH}"
-export IHUB_SIM_BRIDGE="$repo_root/.runtime/vins-overlay-jazzy/install/lib/libihub_sim_bridge.so"
+export IHUB_SIM_BRIDGE="$overlay_root/install/lib/libihub_sim_bridge.so"
 
 nohup setsid timeout --signal=TERM --kill-after=10 "$timeout_s" \
     ros2 launch vins_sim_bringup vins_stack.launch.py \

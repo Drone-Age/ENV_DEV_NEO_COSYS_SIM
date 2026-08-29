@@ -8,6 +8,8 @@ import bisect
 import json
 import math
 import pathlib
+import subprocess
+import sys
 import threading
 import time
 
@@ -27,14 +29,20 @@ def stamp_ns(message) -> int:
 
 
 class TopicProbe(Node):
-    def __init__(self) -> None:
+    def __init__(self, topic_set: str = "all") -> None:
         super().__init__("indra_cosys_topic_probe")
         sensor_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
-            # This is a live-cadence acceptance probe, not an IMU recorder.
-            # A deep Python queue makes stale high-rate IMU deserialization
-            # starve the 0.9 MB RGB callback and under-report camera delivery.
             depth=10,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        imu_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            # Each IMU now has its own callback group. A deeper receive queue
+            # absorbs short Python/DDS scheduling bursts without competing
+            # with the deliberately shallow 0.9 MB RGB queue.
+            depth=100,
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
         )
@@ -46,12 +54,15 @@ class TopicProbe(Node):
         )
         image_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
-            depth=2,
-            reliability=ReliabilityPolicy.BEST_EFFORT,
+            # Match the bridge queue so the qualification probe measures
+            # transport throughput rather than dropping a brief DDS burst.
+            depth=10,
+            reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
         )
         truth_group = MutuallyExclusiveCallbackGroup()
-        imu_group = MutuallyExclusiveCallbackGroup()
+        body_imu_group = MutuallyExclusiveCallbackGroup()
+        camera_imu_group = MutuallyExclusiveCallbackGroup()
         image_group = MutuallyExclusiveCallbackGroup()
         info_group = MutuallyExclusiveCallbackGroup()
         self.stamps: dict[str, list[int]] = {name: [] for name in ("clock", "odom", "body_imu", "camera_imu", "image", "camera_info")}
@@ -59,12 +70,21 @@ class TopicProbe(Node):
         self.frames: dict[str, set[str]] = {name: set() for name in ("odom", "odom_child", "body_imu", "camera_imu", "image", "camera_info")}
         self.image_shapes: set[tuple[int, int, str, int]] = set()
         self.camera_models: list[tuple[list[float], list[float], str]] = []
-        self.create_subscription(Clock, "/clock", self.clock_callback, clock_qos, callback_group=truth_group)
-        self.create_subscription(Odometry, "/sim/ground_truth/odom", self.odom_callback, sensor_qos, callback_group=truth_group)
-        self.create_subscription(Imu, "/sim/body/imu", lambda msg: self.imu_callback("body_imu", msg), sensor_qos, callback_group=imu_group)
-        self.create_subscription(Imu, "/sim/camera/imu", lambda msg: self.imu_callback("camera_imu", msg), sensor_qos, callback_group=imu_group)
-        self.create_subscription(Image, "/sim/camera/image_raw", self.image_callback, image_qos, callback_group=image_group)
-        self.create_subscription(CameraInfo, "/sim/camera/camera_info", self.info_callback, image_qos, callback_group=info_group)
+        if topic_set in ("all", "core"):
+            self.create_subscription(Clock, "/clock", self.clock_callback, clock_qos, callback_group=truth_group)
+            self.create_subscription(Odometry, "/sim/ground_truth/odom", self.odom_callback, sensor_qos, callback_group=truth_group)
+            # The two 200 Hz streams must be measured independently. Putting both
+            # subscriptions in one mutually-exclusive callback group serializes
+            # 400 callbacks/s and makes the probe, rather than the bridge, the
+            # bottleneck while large RGB samples are being deserialized.
+            self.create_subscription(Imu, "/sim/body/imu", lambda msg: self.imu_callback("body_imu", msg), imu_qos, callback_group=body_imu_group)
+            self.create_subscription(Imu, "/sim/camera/imu", lambda msg: self.imu_callback("camera_imu", msg), imu_qos, callback_group=camera_imu_group)
+        if topic_set in ("all", "image"):
+            # Raw RGB deserialization has its own process during qualification.
+            # That mirrors the production graph and prevents Python's GIL from
+            # making the probe itself drop IMU or image traffic.
+            self.create_subscription(Image, "/sim/camera/image_raw", self.image_callback, image_qos, callback_group=image_group)
+            self.create_subscription(CameraInfo, "/sim/camera/camera_info", self.info_callback, image_qos, callback_group=info_group)
 
     def clock_callback(self, message: Clock) -> None:
         self.arrivals["clock"].append(time.monotonic())
@@ -144,32 +164,24 @@ def nearest_timestamp_p95_ms(reference: list[int], candidates: list[int]) -> flo
     return deltas[rank] / 1_000_000.0
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--duration", type=float, default=10.0)
-    parser.add_argument("--profile", type=pathlib.Path, required=True)
-    parser.add_argument("--output", type=pathlib.Path, required=True)
-    args = parser.parse_args()
-    profile = json.loads(args.profile.read_text(encoding="utf-8"))
-
-    rclpy.init()
-    node = TopicProbe()
-    executor = MultiThreadedExecutor(num_threads=4)
+def collect(node: TopicProbe, duration_s: float, executor_threads: int, start_wall: float | None = None) -> None:
+    executor = MultiThreadedExecutor(num_threads=executor_threads)
     executor.add_node(node)
     spin_thread = threading.Thread(target=executor.spin, name="ros-topic-probe", daemon=False)
+    if start_wall is not None:
+        time.sleep(max(0.0, start_wall - time.monotonic()))
     spin_thread.start()
     try:
-        time.sleep(args.duration)
+        time.sleep(duration_s)
     finally:
-        executor.shutdown(wait_for_threads=True)
+        if not executor.shutdown(timeout_sec=5.0):
+            raise RuntimeError("ROS topic probe executor shutdown timed out")
         spin_thread.join(timeout=5.0)
         if spin_thread.is_alive():
             raise RuntimeError("ROS topic probe executor did not stop cleanly")
-        # Jazzy's MultiThreadedExecutor can leave completed callback futures in
-        # its submission list when shutdown wakes the spin loop. Draining them
-        # prevents misleading "exception was never retrieved" warnings when
-        # handles are destroyed during an otherwise clean shutdown.
-        for future in list(executor._futures):
+        completed_futures = list(executor._futures)
+        executor._futures.clear()
+        for future in completed_futures:
             try:
                 future.result()
             except Exception:
@@ -177,6 +189,76 @@ def main() -> int:
         executor.remove_node(node)
         node.destroy_node()
         rclpy.shutdown()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--duration", type=float, default=10.0)
+    parser.add_argument("--profile", type=pathlib.Path, required=True)
+    parser.add_argument("--output", type=pathlib.Path, required=True)
+    parser.add_argument("--image-only", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--start-wall", type=float, help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    profile = json.loads(args.profile.read_text(encoding="utf-8"))
+
+    if args.image_only:
+        rclpy.init()
+        image_node = TopicProbe("image")
+        collect(image_node, args.duration, 2, args.start_wall)
+        samples = {
+            "stamps": {name: image_node.stamps[name] for name in ("image", "camera_info")},
+            "arrivals": {name: image_node.arrivals[name] for name in ("image", "camera_info")},
+            "frames": {name: sorted(image_node.frames[name]) for name in ("image", "camera_info")},
+            "image_shapes": [list(shape) for shape in sorted(image_node.image_shapes)],
+            "camera_models": image_node.camera_models,
+        }
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(samples), encoding="utf-8")
+        return 0
+
+    image_samples_path = args.output.with_suffix(args.output.suffix + ".image-samples")
+    synchronized_start = time.monotonic() + 2.0
+    image_process = subprocess.Popen(
+        [
+            sys.executable,
+            str(pathlib.Path(__file__).resolve()),
+            "--duration", str(args.duration),
+            "--profile", str(args.profile),
+            "--output", str(image_samples_path),
+            "--image-only",
+            "--start-wall", str(synchronized_start),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    rclpy.init()
+    node = TopicProbe("core")
+    try:
+        collect(node, args.duration, 5, synchronized_start)
+        try:
+            _, image_stderr = image_process.communicate(timeout=args.duration + 10.0)
+        except subprocess.TimeoutExpired:
+            image_process.kill()
+            image_process.communicate()
+            raise RuntimeError("independent ROS image probe timed out")
+        if image_process.returncode != 0 or not image_samples_path.is_file():
+            raise RuntimeError(
+                f"independent ROS image probe failed with code {image_process.returncode}: {image_stderr.strip()}"
+            )
+        image_samples = json.loads(image_samples_path.read_text(encoding="utf-8"))
+        for name in ("image", "camera_info"):
+            node.stamps[name] = [int(value) for value in image_samples["stamps"][name]]
+            node.arrivals[name] = [float(value) for value in image_samples["arrivals"][name]]
+            node.frames[name] = set(image_samples["frames"][name])
+        node.image_shapes = {tuple(shape) for shape in image_samples["image_shapes"]}
+        node.camera_models = [tuple(model) for model in image_samples["camera_models"]]
+    finally:
+        if image_process.poll() is None:
+            image_process.kill()
+            image_process.communicate()
+        image_samples_path.unlink(missing_ok=True)
 
     rates = {name: rate(stamps) for name, stamps in node.stamps.items()}
     wall_rates = {name: wall_rate(arrivals) for name, arrivals in node.arrivals.items()}

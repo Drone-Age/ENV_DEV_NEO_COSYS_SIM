@@ -31,9 +31,20 @@ class VinsRuntimeProbe(Node):
         self.camera_imu_min_x_accel = math.inf
         self.camera_imu_max_x_accel = -math.inf
         self.features_max = 0
+        self.features_min = math.inf
+        self.features_last = 0
+        self.feature_messages = 0
+        self.feature_messages_below_gate = 0
         self.vins_odometry_count = 0
         self.mavros_odometry_count = 0
+        self.ground_truth_position = None
+        self.ground_truth_receive_s = 0.0
+        self.external_nav_error_count = 0
+        self.external_nav_current_error_m = math.inf
+        self.external_nav_max_error_m = 0.0
+        self.external_nav_max_error_limit_m = 5.0
         self.ihub = None
+        self.ihub_reason_history: list[str] = []
         self.initialization = None
         self.external_nav = None
 
@@ -67,6 +78,9 @@ class VinsRuntimeProbe(Node):
         self.create_subscription(
             Odometry, "/mavros/odometry/out", self._mavros_odometry, qos_profile_sensor_data
         )
+        self.create_subscription(
+            Odometry, "/sim/ground_truth/odom", self._ground_truth, qos_profile_sensor_data
+        )
         self.create_timer(0.5, self._request_alignment)
 
     def _request_alignment(self) -> None:
@@ -88,6 +102,10 @@ class VinsRuntimeProbe(Node):
 
     def _ihub(self, message: CameraTiltStatus) -> None:
         self.ihub = message
+        reason = str(message.reason).strip()
+        if reason and (not self.ihub_reason_history or self.ihub_reason_history[-1] != reason):
+            self.ihub_reason_history.append(reason)
+            self.ihub_reason_history = self.ihub_reason_history[-32:]
 
     def _initialization(self, message: IVINSStatus) -> None:
         self.initialization = message
@@ -105,13 +123,42 @@ class VinsRuntimeProbe(Node):
         self.camera_imu_max_x_accel = max(self.camera_imu_max_x_accel, x_accel)
 
     def _features(self, message: PointCloud) -> None:
-        self.features_max = max(self.features_max, len(message.points))
+        count = len(message.points)
+        self.feature_messages += 1
+        self.features_last = count
+        self.features_min = min(self.features_min, count)
+        self.features_max = max(self.features_max, count)
+        if count < 15:
+            self.feature_messages_below_gate += 1
 
     def _vins_odometry(self, _message: Odometry) -> None:
         self.vins_odometry_count += 1
 
-    def _mavros_odometry(self, _message: Odometry) -> None:
+    def _ground_truth(self, message: Odometry) -> None:
+        position = message.pose.pose.position
+        values = (float(position.x), float(position.y), float(position.z))
+        if all(math.isfinite(value) for value in values):
+            self.ground_truth_position = values
+            self.ground_truth_receive_s = time.monotonic()
+
+    def _mavros_odometry(self, message: Odometry) -> None:
         self.mavros_odometry_count += 1
+        if (
+            self.ground_truth_position is None
+            or time.monotonic() - self.ground_truth_receive_s > 0.25
+        ):
+            return
+        position = message.pose.pose.position
+        values = (float(position.x), float(position.y), float(position.z))
+        if not all(math.isfinite(value) for value in values):
+            return
+        error_m = math.sqrt(sum(
+            (values[index] - self.ground_truth_position[index]) ** 2
+            for index in range(3)
+        ))
+        self.external_nav_error_count += 1
+        self.external_nav_current_error_m = error_m
+        self.external_nav_max_error_m = max(self.external_nav_max_error_m, error_m)
 
     def result(self) -> dict:
         joint_span = (
@@ -154,6 +201,14 @@ class VinsRuntimeProbe(Node):
                 and self.external_nav.camera_mount_valid
                 and self.mavros_odometry_count >= 5
             ),
+            "external_nav_ground_truth": bool(
+                self.external_nav_error_count >= 5
+                and time.monotonic() - self.ground_truth_receive_s <= 0.25
+                and self.external_nav_current_error_m
+                <= self.external_nav_max_error_limit_m
+                and self.external_nav_max_error_m
+                <= self.external_nav_max_error_limit_m
+            ),
         }
         return {
             "schema": 1,
@@ -170,11 +225,56 @@ class VinsRuntimeProbe(Node):
                 "camera_imu_max_y_rate_rad_s": self.camera_imu_max_y_rate,
                 "camera_imu_x_acceleration_span_m_s2": acceleration_span,
                 "features_max": self.features_max,
+                "features_min": (
+                    None if self.feature_messages == 0 else self.features_min
+                ),
+                "features_last": self.features_last,
+                "feature_messages": self.feature_messages,
+                "feature_messages_below_gate": self.feature_messages_below_gate,
                 "vins_odometry_count": self.vins_odometry_count,
                 "mavros_odometry_count": self.mavros_odometry_count,
+                "external_nav_ground_truth_error_count": self.external_nav_error_count,
+                "external_nav_current_ground_truth_error_m": (
+                    None
+                    if self.external_nav_error_count == 0
+                    else self.external_nav_current_error_m
+                ),
+                "external_nav_maximum_ground_truth_error_m": self.external_nav_max_error_m,
+                "external_nav_ground_truth_error_limit_m": self.external_nav_max_error_limit_m,
                 "ihub_reason": "" if self.ihub is None else self.ihub.reason,
+                "ihub_reason_history": self.ihub_reason_history,
+                "ihub_calibration_valid": bool(
+                    self.ihub and self.ihub.calibration_valid
+                ),
+                "ihub_session_calibrated": bool(
+                    self.ihub and self.ihub.session_calibrated
+                ),
                 "initialization_reason": (
                     "" if self.initialization is None else self.initialization.reason
+                ),
+                "initialization_state": (
+                    None if self.initialization is None else int(self.initialization.state)
+                ),
+                "initialization_elapsed_s": (
+                    None
+                    if self.initialization is None
+                    else float(self.initialization.initialization_elapsed_s)
+                ),
+                "initialization_odometry_count": (
+                    0 if self.initialization is None else int(self.initialization.odometry_count)
+                ),
+                "initialization_reset_count": (
+                    0 if self.initialization is None else int(self.initialization.reset_count)
+                ),
+                "initialization_current_drift_m": (
+                    None
+                    if self.initialization is None
+                    else float(self.initialization.current_drift_m)
+                ),
+                "initialization_maximum_drift_m": (
+                    None
+                    if self.initialization is None
+                    else float(self.initialization.maximum_drift_m)
                 ),
                 "external_nav_reason": (
                     "" if self.external_nav is None else self.external_nav.reason
@@ -191,10 +291,29 @@ def write_result(path: Path, result: dict) -> None:
     path.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def apply_completion_gate(result: dict, completion_file: Path | None) -> dict:
+    """Require a completed PASS mission before a qualification probe may pass."""
+    if completion_file is None:
+        return result
+    verdict = ""
+    try:
+        payload = json.loads(completion_file.read_text(encoding="utf-8"))
+        verdict = str(payload.get("verdict", ""))
+    except (OSError, TypeError, ValueError):
+        pass
+    complete = verdict == "PASS"
+    result["gates"]["mission_complete"] = complete
+    result["measurements"]["mission_verdict"] = verdict
+    if not complete:
+        result["status"] = "WAITING"
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeout", type=float, default=240.0)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--completion-file", type=Path)
     args = parser.parse_args()
 
     rclpy.init()
@@ -204,7 +323,7 @@ def main() -> int:
     try:
         while time.monotonic() < deadline:
             rclpy.spin_once(node, timeout_sec=0.1)
-            result = node.result()
+            result = apply_completion_gate(node.result(), args.completion_file)
             write_result(args.output, result)
             if result["status"] == "PASS":
                 print(json.dumps(result, indent=2, sort_keys=True))
