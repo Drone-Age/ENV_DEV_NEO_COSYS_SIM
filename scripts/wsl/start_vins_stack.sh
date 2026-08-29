@@ -56,12 +56,15 @@ set -u
 export ROS_DOMAIN_ID="$domain_id"
 rpc_site="$($HOME/venv-ardupilot/bin/python3 -c 'import site; print(site.getsitepackages()[0])')"
 export PYTHONPATH="$repo_root/third_party/Cosys-AirSim/PythonClient:$rpc_site${PYTHONPATH:+:$PYTHONPATH}"
-if [[ "$runtime_mode" == installed ]]; then
-    export IHUB_SIM_BRIDGE="/opt/vio_stack/current/lib/libihub_sim_bridge.so"
-else
+if [[ "$runtime_mode" == source ]]; then
     export IHUB_SIM_BRIDGE="$HOME/.local/share/indra-cosys/vins-overlay-jazzy/install/lib/libihub_sim_bridge.so"
+    [[ -f "$IHUB_SIM_BRIDGE" ]] || { echo "iHUB simulation bridge is missing: $IHUB_SIM_BRIDGE" >&2; exit 67; }
+else
+    # iHUB 0.3.2 owns the Cosys RPC backend. Do not allow a workstation or a
+    # source overlay to inject the legacy compatibility shared object into the
+    # official installed runtime.
+    unset IHUB_SIM_BRIDGE
 fi
-[[ -f "$IHUB_SIM_BRIDGE" ]] || { echo "iHUB simulation bridge is missing: $IHUB_SIM_BRIDGE" >&2; exit 67; }
 
 nohup setsid timeout --signal=TERM --kill-after=10 "$timeout_s" \
     ros2 launch vins_sim_bringup vins_stack.launch.py \
@@ -70,6 +73,7 @@ nohup setsid timeout --signal=TERM --kill-after=10 "$timeout_s" \
     cosys_port:="$rpc_port" \
     cosys_camera:="0" \
     cosys_vehicle:="Copter" \
+    cosys_pitch_sign:="1.0" \
     ihub_flash_path:="$vins_dir/ihub-flash.bin" \
     >"$vins_dir/stack.log" 2>&1 </dev/null &
 

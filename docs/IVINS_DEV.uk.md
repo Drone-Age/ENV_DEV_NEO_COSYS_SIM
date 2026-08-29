@@ -7,6 +7,11 @@ NewSIM використовує підписану матрицю IVINS для U
 `vins_sim_bringup`. Встановлені компоненти IVINS не компілюються й не
 перекриваються.
 
+Встановлена матриця напряму використовує Cosys backend з iHUB 0.3.2 і явно
+фіксує напрямок camera pitch як `+1.0`. Вона не завантажує й не приймає
+застарілу compatibility-бібліотеку `IHUB_SIM_BRIDGE`; та залишається лише для
+явного source-development fallback.
+
 `-IvinsRuntime source` є явним fallback для розробки компонентів. Його прогони
 не можуть бути офіційним evidence enrollment, delivery, update чи IVINS
 release.

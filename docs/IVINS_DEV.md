@@ -6,6 +6,11 @@ inside `INDRA-COSYS-SIM`. The default `-IvinsRuntime installed` path sources
 builds only the repository-owned `vins_sim_bringup` adapter. It does not compile
 or override an installed IVINS component.
 
+The installed matrix uses the iHUB 0.3.2 Cosys backend directly and fixes the
+camera pitch convention explicitly at `+1.0`. It neither loads nor accepts the
+legacy `IHUB_SIM_BRIDGE` compatibility library. That library remains limited to
+the explicit source-development fallback.
+
 `-IvinsRuntime source` is an explicit component-development fallback. Its runs
 cannot serve as official enrollment, delivery, update, or IVINS release
 evidence.

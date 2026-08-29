@@ -35,6 +35,7 @@ def generate_launch_description():
         DeclareLaunchArgument("cosys_port", default_value="41452"),
         DeclareLaunchArgument("cosys_camera", default_value="0"),
         DeclareLaunchArgument("cosys_vehicle", default_value="Copter"),
+        DeclareLaunchArgument("cosys_pitch_sign", default_value="1.0"),
         LogInfo(msg=["Starting Cosys VINS stack; FCU: ", fcu_url]),
 
         Node(
@@ -105,6 +106,7 @@ def generate_launch_description():
                 "--cosys-port", LaunchConfiguration("cosys_port"),
                 "--cosys-camera", LaunchConfiguration("cosys_camera"),
                 "--cosys-vehicle", LaunchConfiguration("cosys_vehicle"),
+                "--cosys-pitch-sign", LaunchConfiguration("cosys_pitch_sign"),
             ],
             name="ihub_server_sim",
             output="screen",
