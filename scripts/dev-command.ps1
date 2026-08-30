@@ -209,7 +209,7 @@ function Get-BackendCapabilities {
             mission_planner_default_for_test = $false
             ros2 = $true
             vins = $true
-            wind_command_ack = $false
+            wind_command_ack = $true
             camera_fixed_rate_hz = $true
             camera_imu_batched = $true
         }
@@ -656,7 +656,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
     $sitlLiveness = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\assert_sitl_alive.sh')
     $pidCheck = Invoke-Wsl -Command "bash '$sitlLiveness' '$runWsl' 15" -AllowFailure
     if ($pidCheck.ExitCode -ne 0) { throw "ArduCopter SITL did not remain stable for 15 seconds; see $runDirectory\sitl\sitl.log" }
-    Write-Pass 'ArduCopter SITL' "instance $($script:Config.sitl_instance), AirSim $($settings.Network.WindowsIp), TCP $($script:Config.ports.mavlink_tcp)/$($script:Config.ports.mission_planner_tcp)"
+    Write-Pass 'ArduCopter SITL' "instance $($script:Config.sitl_instance), AirSim $($settings.Network.WindowsIp), TCP $($script:Config.ports.mavlink_tcp)/$($script:Config.ports.mission_planner_tcp)/$($script:Config.ports.wind_mavlink_tcp)"
 
     $mavlinkDeadline = (Get-Date).AddSeconds(60)
     $mavlinkReady = $false
