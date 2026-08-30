@@ -190,6 +190,7 @@ After the ordinary flight PASS, verify the optional SIM2-compatible sensor graph
 .\dev.ps1 ros-test -Environment blocks -SkipBuild
 .\dev.ps1 vins-test -Environment blocks -SkipBuild
 .\dev.ps1 wind-test -Environment blocks -SkipBuild
+.\dev.ps1 iros-test -Environment blocks -SkipBuild
 .\dev.ps1 test -Environment blocks -SkipBuild -WithRos2
 ```
 
@@ -198,6 +199,8 @@ The first command requires all six topics, exact frame IDs, strictly increasing 
 `vins-test` is the first VINS acceptance gate. It requires the complete iHUB 0-90 degree sweep, moving-frame CameraImu evidence, at least 15 tracked features, VINS initializer READY, fresh ExternalNav READY and `/mavros/odometry/out`. It never launches Mission Planner and stores its verdict under the run's `vins/` evidence directory.
 
 `wind-test` independently requires correlated baseline, gust and recovery acknowledgements after both ArduPilot `PARAM_VALUE` and Cosys physics readback. It uses the isolated NewSIM MAVLink TCP 5784 endpoint and never enables the MAVROS parameter plugin.
+
+`iros-test` is the release-only Ubuntu 24.04 AMD64 environment gate. It first proves the camera, CameraImu and odometry topics with strictly increasing timestamps, then flies above 500 m, lands, disarms and seals `env-sim-500m_noble-amd64.json`. It does not qualify or modify the Raspberry Pi production path.
 
 The reserved ports allow functional SIM2/NewSIM coexistence, but rate qualification must run without a competing Gazebo, VINS, rosbag or GPU-heavy job on the same workstation. Such a load changes wall cadence and invalidates performance evidence; it is not a reason to stop another user-owned simulation. Evidence `2026-08-25_075418_test_91c0c67e` was completed before the concurrent SIM2 VINS-climb run began.
 

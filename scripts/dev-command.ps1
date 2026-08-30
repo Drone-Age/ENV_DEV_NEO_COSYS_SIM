@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'vins-test', 'wind-test', 'stop', 'logs', 'env', 'capabilities')][string]$Command,
+    [Parameter(Mandatory)][ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'vins-test', 'wind-test', 'iros-test', 'stop', 'logs', 'env', 'capabilities')][string]$Command,
     [ValidateSet('list', 'doctor', 'build-map', 'import-assets')][string]$EnvironmentCommand = 'list',
     [string]$Environment = 'blocks',
     [ValidateSet('qualification', 'visual')][string]$RenderProfile = 'qualification',
@@ -238,6 +238,7 @@ function Get-BackendCapabilities {
             test = @('-Environment', '-RenderProfile', '-WithRos2', '-Preview')
             ros_test = @('-Environment', '-RenderProfile', '-Preview')
             wind_test = @('-Environment', '-RenderProfile', '-Preview')
+            iros_test = @('-Environment', '-RenderProfile', '-Preview')
             qualification_accepted_args = @('-RunId', '-FlightLogDirectory', '-Rosbag', '-FlightQualification', '-FlightQualificationLimitM', '-FlightQualificationProfile', '-FlightQualificationNoWind', '-FlightQualificationNoVisualUi', '-RouteQualification', '-RouteQualificationProfile', '-VinsConfigFile', '-Distro', '-WithRos2', '-WithMissionPlanner')
         }
     }
@@ -905,6 +906,104 @@ function Invoke-WindRuntimeTest {
     }
 }
 
+function Invoke-IrosEnvironmentTest {
+    $requiredAltitudeM = 500.0
+    $commandedAltitudeM = 505.0
+    try {
+        $runDirectory = Start-Environment -ForTest $true -NoMissionPlanner -StartRos2
+    } catch {
+        $startupRun = Get-ActiveRun
+        if ($startupRun) { Stop-RecordedProcesses $startupRun }
+        Remove-Item -LiteralPath (Join-Path $script:RuntimeRoot 'active-run.txt') -Force -ErrorAction SilentlyContinue
+        throw
+    }
+    try {
+        $runWsl = Convert-ToWslPath $runDirectory
+        $profile = Convert-ToWslPath (Join-Path $script:RepoRoot 'config\ros2\sensor-profile.json')
+        $topicProbe = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\ros_topic_probe.py')
+        $topicOutput = "$runWsl/ros2/topic-probe.json"
+        $domainId = [int]$script:Config.future_ros_domain_id
+        $topicCommand = "if [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else source /opt/iros2j/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$topicProbe' --duration 12 --profile '$profile' --output '$topicOutput'"
+        Write-Step 'Qualifying iROS camera, CameraImu, odometry and strictly increasing timestamps'
+        $topicResult = Invoke-Wsl -Command $topicCommand -AllowFailure
+        $topicResult.Output | Tee-Object -FilePath (Join-Path $runDirectory 'ros2\topic-probe.log') | ForEach-Object { Write-Host $_ }
+        if ($topicResult.ExitCode -ne 0) { throw "iROS topic qualification failed with code $($topicResult.ExitCode)." }
+        $topics = Get-Content -Raw -LiteralPath (Join-Path $runDirectory 'ros2\topic-probe.json') | ConvertFrom-Json
+        if ($topics.verdict -ne 'PASS' -or -not [bool]$topics.checks.strictly_monotonic_timestamps) {
+            throw 'iROS topic evidence did not pass the monotonic timestamp contract.'
+        }
+
+        $controller = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\demo_mission.py')
+        $missionOutput = "$runWsl/iros2/flight-500m.json"
+        $missionTimeout = 1200
+        New-Item -ItemType Directory -Force -Path (Join-Path $runDirectory 'iros2') | Out-Null
+        $missionCommand = "source ~/venv-ardupilot/bin/activate && timeout $($missionTimeout + 30) python3 '$controller' --connect tcp:127.0.0.1:$($script:Config.ports.mavlink_tcp) --output '$missionOutput' --sitl-pid-file '$runWsl/sitl/sitl.pid' --lat $($script:Config.origin.latitude) --lon $($script:Config.origin.longitude) --alt $($script:Config.origin.altitude_m) --takeoff $commandedAltitudeM --side 5 --timeout $missionTimeout"
+        Write-Step "Flying the iROS environment gate above $requiredAltitudeM m, then landing and disarming"
+        $flightResult = Invoke-Wsl -Command $missionCommand -AllowFailure
+        $flightResult.Output | Tee-Object -FilePath (Join-Path $runDirectory 'iros2\flight-500m.log') | ForEach-Object { Write-Host $_ }
+        if ($flightResult.ExitCode -ne 0) { throw "iROS 500 m flight failed with code $($flightResult.ExitCode)." }
+        $flight = Get-Content -Raw -LiteralPath (Join-Path $runDirectory 'iros2\flight-500m.json') | ConvertFrom-Json
+        $landing = @($flight.events | Where-Object event -eq 'landed_disarmed' | Select-Object -Last 1)
+        $achievedAltitudeM = if ($landing.Count -eq 1) { [double]$landing[0].max_alt_m } else { 0.0 }
+        if ($flight.verdict -ne 'PASS' -or -not [bool]$flight.gates.landed -or -not [bool]$flight.gates.disarmed -or $achievedAltitudeM -lt $requiredAltitudeM) {
+            throw "iROS flight evidence is incomplete: achieved=$achievedAltitudeM landed=$($flight.gates.landed) disarmed=$($flight.gates.disarmed)."
+        }
+
+        $evidenceFiles = @(
+            'settings.json', 'ros2\topic-probe.json',
+            'iros2\flight-500m.json', 'iros2\parameters.json'
+        )
+        $sealed = foreach ($relative in $evidenceFiles) {
+            $path = Join-Path $runDirectory $relative
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Required iROS evidence file is missing: $relative" }
+            [ordered]@{ path = $relative.Replace('\','/'); sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() }
+        }
+        $evidenceManifestPath = Join-Path $runDirectory 'iros2\evidence-manifest.json'
+        Write-JsonFile ([ordered]@{ schema = 1; files = @($sealed) }) $evidenceManifestPath
+        $environmentCommit = (& git -C $script:RepoRoot rev-parse HEAD).Trim()
+        $environmentEvidence = [ordered]@{
+            schema = 'iros2j-env-sim-500m/v1'
+            status = 'PASS'
+            target = 'noble-amd64'
+            package_version = '1.1.2'
+            build_commit = '400af78ff9208017cf9216e7433d961434c501b7'
+            environment_commit = $environmentCommit
+            platform = [ordered]@{ distribution = 'ubuntu'; release = '24.04'; architecture = 'amd64'; simulator = 'NewSIM Cosys'; role = 'DEV-only' }
+            flight = [ordered]@{ required_altitude_m = 500; achieved_altitude_m = $achievedAltitudeM; landed = $true; disarmed = $true }
+            ros = [ordered]@{
+                discovery = 'PASS'
+                timestamps_strictly_increasing = $true
+                topics = [ordered]@{ camera_image = [int]$topics.counts.image; camera_imu = [int]$topics.counts.camera_imu; odometry = [int]$topics.counts.odom }
+            }
+            evidence_bundle_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $evidenceManifestPath).Hash.ToLowerInvariant()
+        }
+        $environmentEvidencePath = Join-Path $runDirectory 'iros2\env-sim-500m_noble-amd64.json'
+        Write-JsonFile $environmentEvidence $environmentEvidencePath
+
+        $summaryPath = Join-Path $runDirectory 'summary.json'
+        $summary = Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json
+        $summary.status = 'PASS'
+        $summary | Add-Member -NotePropertyName completed_at -NotePropertyValue (Get-Date).ToUniversalTime().ToString('o') -Force
+        $summary | Add-Member -NotePropertyName iros_topic_probe -NotePropertyValue $topics -Force
+        $summary | Add-Member -NotePropertyName iros_500m_flight -NotePropertyValue $flight -Force
+        $summary | Add-Member -NotePropertyName iros_environment_evidence -NotePropertyValue $environmentEvidence -Force
+        Write-JsonFile $summary $summaryPath
+        Write-Host "iROS 500 m environment PASS: $runDirectory" -ForegroundColor Green
+    } catch {
+        $summaryPath = Join-Path $runDirectory 'summary.json'
+        if (Test-Path -LiteralPath $summaryPath) {
+            $summary = Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json
+            $summary.status = 'FAIL'
+            $summary | Add-Member -NotePropertyName error -NotePropertyValue $_.Exception.Message -Force
+            Write-JsonFile $summary $summaryPath
+        }
+        throw
+    } finally {
+        Stop-RecordedProcesses $runDirectory
+        Remove-Item -LiteralPath (Join-Path $script:RuntimeRoot 'active-run.txt') -Force -ErrorAction SilentlyContinue
+    }
+}
+
 switch ($Command) {
     'doctor' { exit (Invoke-Doctor) }
     'setup' { Invoke-Setup }
@@ -920,6 +1019,7 @@ switch ($Command) {
     'ros-test' { Invoke-RosTopicTest }
     'vins-test' { Invoke-VinsRuntimeTest }
     'wind-test' { Invoke-WindRuntimeTest }
+    'iros-test' { Invoke-IrosEnvironmentTest }
     'camera-test' {
         Write-Step 'Qualifying raw-RGB camera profiles: 640x480 >= 20 FPS, 1280x720 >= 10 FPS (Mission Planner is not started)'
         & (Join-Path $PSScriptRoot 'camera-benchmark.ps1') -Width 640 -Height 480 -DurationSeconds 20 -MinRawFps 20 -Environment $Environment -RenderProfile $RenderProfile -Preview:$Preview
