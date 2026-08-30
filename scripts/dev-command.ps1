@@ -208,7 +208,7 @@ function Get-BackendCapabilities {
             evidence_schema = 1
             mission_planner_default_for_test = $false
             ros2 = $true
-            vins = $false
+            vins = $true
             wind_command_ack = $false
             camera_fixed_rate_hz = $true
             camera_imu_batched = $true
@@ -529,12 +529,13 @@ function Start-RosBridge([string]$RunDirectory, [object]$Settings) {
     Write-Pass 'ROS 2 bridge' "domain $domainId, SIM2-compatible topics published"
 }
 
-function Start-VinsStack([string]$RunDirectory, [object]$Settings) {
+function Start-VinsStack([string]$RunDirectory, [object]$Settings, [switch]$EnableWind) {
     $repoWsl = Convert-ToWslPath $script:RepoRoot
     $runWsl = Convert-ToWslPath $RunDirectory
     $launcher = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\start_vins_stack.sh')
     $domainId = [int]$script:Config.future_ros_domain_id
-    $command = "bash '$launcher' '$repoWsl' '$runWsl' '$($Settings.Network.WindowsIp)' '$($script:Config.ports.cosys_rpc_tcp)' '$($script:Config.ports.mavlink_tcp)' '$domainId' '900'"
+    $enableWindValue = if ($EnableWind) { 'true' } else { 'false' }
+    $command = "bash '$launcher' '$repoWsl' '$runWsl' '$($Settings.Network.WindowsIp)' '$($script:Config.ports.cosys_rpc_tcp)' '$($script:Config.ports.mavlink_tcp)' '$domainId' '900' '$enableWindValue'"
     $result = Invoke-Wsl -Command $command -AllowFailure
     if ($result.ExitCode -ne 0) { throw "Unable to launch VINS stack: $($result.Output -join ' ')" }
     $check = Invoke-Wsl -Command "test -s '$runWsl/vins/wsl.pid' && kill -0 `$(cat '$runWsl/vins/wsl.pid')" -AllowFailure
@@ -542,8 +543,9 @@ function Start-VinsStack([string]$RunDirectory, [object]$Settings) {
     Write-Pass 'VINS stack' "pinned overlay launched in ROS domain $domainId"
 }
 
-function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$StartRos2, [switch]$StartVins) {
+function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$StartRos2, [switch]$StartVins, [switch]$StartWind) {
     if ($StartVins -and -not $StartRos2) { throw 'VINS requires the Cosys ROS 2 bridge.' }
+    if ($StartWind -and -not $StartVins) { throw 'Acknowledged wind requires the VINS ROS 2 stack.' }
     if ($Distro -notin @($script:Lock.platform.wsl_distribution, 'Ubuntu')) { throw "This pinned bundle requires WSL distribution '$($script:Lock.platform.wsl_distribution)'; legacy test launchers may pass 'Ubuntu' as an alias." }
     $environmentManifest = Get-RuntimeEnvironmentManifest -EnvironmentId $Environment -Preview:$Preview
     if ($environmentManifest.readiness -eq 'preview') {
@@ -666,7 +668,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
     Write-Pass 'MAVLink listeners' "TCP $($script:Config.ports.mavlink_tcp)/$($script:Config.ports.mission_planner_tcp) ready"
 
     if ($StartRos2) { Start-RosBridge -RunDirectory $runDirectory -Settings $settings }
-    if ($StartVins) { Start-VinsStack -RunDirectory $runDirectory -Settings $settings }
+    if ($StartVins) { Start-VinsStack -RunDirectory $runDirectory -Settings $settings -EnableWind:$StartWind }
 
     if ($WithMissionPlanner -or -not $NoMissionPlanner) {
         & (Join-Path $PSScriptRoot 'mission-planner.ps1') -Action Start -RunDirectory $runDirectory -Port $script:Config.ports.mission_planner_tcp
@@ -682,6 +684,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
         endpoints = $script:Config.ports; network = $settings.Network
         ros2 = [ordered]@{ enabled = [bool]$StartRos2; domain_id = [int]$script:Config.future_ros_domain_id }
         vins = [ordered]@{ enabled = [bool]$StartVins; overlay = '~/.local/share/indra-cosys/vins-overlay-jazzy/install/setup.bash' }
+        wind = [ordered]@{ enabled = [bool]$StartWind; command_topic = '/sim/wind/command'; truth_topic = '/sim/wind/truth' }
     }
     Write-JsonFile $metadata (Join-Path $runDirectory 'summary.json')
     return $runDirectory
@@ -796,7 +799,7 @@ function Invoke-RosTopicTest {
 
 function Invoke-VinsRuntimeTest {
     try {
-        $runDirectory = Start-Environment -ForTest $true -NoMissionPlanner -StartRos2 -StartVins
+        $runDirectory = Start-Environment -ForTest $true -NoMissionPlanner -StartRos2 -StartVins -StartWind
     } catch {
         $startupRun = Get-ActiveRun
         if ($startupRun) { Stop-RecordedProcesses $startupRun }
@@ -822,6 +825,15 @@ function Invoke-VinsRuntimeTest {
         if (-not (Test-Path -LiteralPath $missionPath)) { throw 'VINS translation mission evidence is missing.' }
         $missionResult = Get-Content -Raw -LiteralPath $missionPath | ConvertFrom-Json
         if ($missionResult.verdict -ne 'PASS') { throw "VINS translation mission verdict is $($missionResult.verdict)." }
+        $windProbe = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\wind_probe.py')
+        $windOutput = "$runWsl/vins/wind-probe.json"
+        $windCommand = "if [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else source /opt/iros2j/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$windProbe' --output '$windOutput' --timeout-per-stage 15"
+        Write-Step 'Probing correlated baseline, gust and recovery wind acknowledgements in ArduPilot and Unreal'
+        $windResult = Invoke-Wsl -Command $windCommand -AllowFailure
+        $windResult.Output | Tee-Object -FilePath (Join-Path $runDirectory 'vins\wind-probe.log') | ForEach-Object { Write-Host $_ }
+        if ($windResult.ExitCode -ne 0) { throw "Wind acknowledgement qualification failed with code $($windResult.ExitCode)." }
+        $windProbeResult = Get-Content -Raw -LiteralPath (Join-Path $runDirectory 'vins\wind-probe.json') | ConvertFrom-Json
+        if ($windProbeResult.status -ne 'PASS') { throw "Wind acknowledgement verdict is $($windProbeResult.status)." }
         $bridgeStatus = Assert-RosBridgeTransport -RunDirectory $runDirectory
         if ([int64]$bridgeStatus.gimbal.rejected -ne 0) { throw 'ROS bridge rejected an authoritative gimbal sample.' }
         $summaryPath = Join-Path $runDirectory 'summary.json'
@@ -830,6 +842,7 @@ function Invoke-VinsRuntimeTest {
         $summary | Add-Member -NotePropertyName completed_at -NotePropertyValue (Get-Date).ToUniversalTime().ToString('o') -Force
         $summary | Add-Member -NotePropertyName vins_runtime_probe -NotePropertyValue $probeResult -Force
         $summary | Add-Member -NotePropertyName vins_translation_mission -NotePropertyValue $missionResult -Force
+        $summary | Add-Member -NotePropertyName wind_ack_probe -NotePropertyValue $windProbeResult -Force
         $summary | Add-Member -NotePropertyName ros_bridge_status -NotePropertyValue $bridgeStatus -Force
         Write-JsonFile $summary $summaryPath
         Write-Host "VINS runtime PASS: $runDirectory" -ForegroundColor Green
@@ -852,7 +865,13 @@ switch ($Command) {
     'doctor' { exit (Invoke-Doctor) }
     'setup' { Invoke-Setup }
     'build' { Invoke-Build }
-    'run' { Assert-QualificationCapabilities; $run = Start-Environment $false -NoMissionPlanner:$NoMissionPlanner -StartRos2:$WithRos2; Write-Host "Environment is running. Evidence: $run" -ForegroundColor Green }
+    'run' {
+        Assert-QualificationCapabilities
+        $qualificationRun = $FlightQualification -or $RouteQualification
+        $windRun = $qualificationRun -and -not $FlightQualificationNoWind
+        $run = Start-Environment $false -NoMissionPlanner:$NoMissionPlanner -StartRos2:($WithRos2 -or $qualificationRun) -StartVins:$qualificationRun -StartWind:$windRun
+        Write-Host "Environment is running. Evidence: $run" -ForegroundColor Green
+    }
     'test' { Assert-QualificationCapabilities; Invoke-SmokeTest }
     'ros-test' { Invoke-RosTopicTest }
     'vins-test' { Invoke-VinsRuntimeTest }

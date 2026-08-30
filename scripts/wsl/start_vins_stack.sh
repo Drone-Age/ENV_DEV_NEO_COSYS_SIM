@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 7 ]]; then
-    echo "usage: start_vins_stack.sh <repo-root> <run-dir> <host> <rpc-port> <mavlink-port> <domain-id> <timeout-s>" >&2
+if [[ $# -ne 8 ]]; then
+    echo "usage: start_vins_stack.sh <repo-root> <run-dir> <host> <rpc-port> <mavlink-port> <domain-id> <timeout-s> <enable-wind>" >&2
     exit 64
 fi
 
@@ -13,6 +13,11 @@ rpc_port=$4
 mavlink_port=$5
 domain_id=$6
 timeout_s=$7
+enable_wind=$8
+if [[ $enable_wind != true && $enable_wind != false ]]; then
+    echo "enable-wind must be true or false" >&2
+    exit 64
+fi
 vins_dir="$run_dir/vins"
 overlay_root="${INDRA_VINS_RUNTIME_ROOT:-$HOME/.local/share/indra-cosys}/vins-overlay-jazzy"
 overlay="$overlay_root/install/setup.bash"
@@ -50,6 +55,7 @@ nohup setsid timeout --signal=TERM --kill-after=10 "$timeout_s" \
     cosys_port:="$rpc_port" \
     cosys_camera:="0" \
     cosys_vehicle:="Copter" \
+    enable_wind:="$enable_wind" \
     ihub_flash_path:="$vins_dir/ihub-flash.bin" \
     >"$vins_dir/stack.log" 2>&1 </dev/null &
 

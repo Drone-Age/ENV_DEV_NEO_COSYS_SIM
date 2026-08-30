@@ -1,7 +1,9 @@
 import json
+from unittest.mock import Mock
 
 from nav_msgs.msg import Odometry
 import rclpy
+from vio_stack_interfaces.msg import ExternalNavHealth, IVINSStatus
 
 from vins_runtime_probe import VinsRuntimeProbe, apply_completion_gate
 
@@ -50,6 +52,37 @@ def test_ground_truth_gate_rejects_accumulated_external_nav_drift():
         assert result["measurements"][
             "external_nav_maximum_ground_truth_error_m"
         ] == 6.0
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_alignment_capture_waits_for_qualified_vins_and_admits_only_ready_external_nav():
+    rclpy.init()
+    node = VinsRuntimeProbe()
+    try:
+        node.enable_publisher = Mock()
+        node.admission_publisher = Mock()
+        node._request_alignment()
+        node.enable_publisher.publish.assert_not_called()
+        node.admission_publisher.publish.assert_not_called()
+
+        initialization = IVINSStatus()
+        initialization.state = IVINSStatus.READY
+        initialization.allow_navigation_output = True
+        node.initialization = initialization
+        node._request_alignment()
+        node.enable_publisher.publish.assert_called_once()
+        node.admission_publisher.publish.assert_not_called()
+
+        health = ExternalNavHealth()
+        health.state = ExternalNavHealth.READY
+        health.ready = True
+        health.alignment_valid = True
+        node.external_nav = health
+        node._request_alignment()
+        assert node.enable_publisher.publish.call_count == 2
+        node.admission_publisher.publish.assert_called_once()
     finally:
         node.destroy_node()
         rclpy.shutdown()

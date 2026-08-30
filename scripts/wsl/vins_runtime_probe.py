@@ -84,8 +84,24 @@ class VinsRuntimeProbe(Node):
         self.create_timer(0.5, self._request_alignment)
 
     def _request_alignment(self) -> None:
-        self.enable_publisher.publish(Bool(data=True))
-        self.admission_publisher.publish(Bool(data=True))
+        initialization_ready = bool(
+            self.initialization
+            and self.initialization.state == IVINSStatus.READY
+            and self.initialization.allow_navigation_output
+        )
+        if initialization_ready:
+            # Never freeze the one-shot world->odom transform from transient
+            # pre-initialization VINS poses.  Capture begins only after the
+            # initializer has latched a fully qualified navigation solution.
+            self.enable_publisher.publish(Bool(data=True))
+        external_nav_ready = bool(
+            self.external_nav
+            and self.external_nav.state == ExternalNavHealth.READY
+            and self.external_nav.ready
+            and self.external_nav.alignment_valid
+        )
+        if external_nav_ready:
+            self.admission_publisher.publish(Bool(data=True))
 
     def _joint(self, message: JointState) -> None:
         try:
