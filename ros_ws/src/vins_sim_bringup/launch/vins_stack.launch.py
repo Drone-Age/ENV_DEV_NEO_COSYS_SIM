@@ -35,6 +35,7 @@ def generate_launch_description():
         DeclareLaunchArgument("cosys_port", default_value="41452"),
         DeclareLaunchArgument("cosys_camera", default_value="0"),
         DeclareLaunchArgument("cosys_vehicle", default_value="Copter"),
+        DeclareLaunchArgument("wind_mavlink_url", default_value="tcp:127.0.0.1:5784"),
         LogInfo(msg=["Starting Cosys VINS stack; FCU: ", fcu_url]),
 
         Node(
@@ -81,6 +82,7 @@ def generate_launch_description():
                 "cosys_port": ParameterValue(
                     LaunchConfiguration("cosys_port"), value_type=int
                 ),
+                "mavlink_url": LaunchConfiguration("wind_mavlink_url"),
             }],
         ),
 

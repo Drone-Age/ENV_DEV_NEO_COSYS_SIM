@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 6 ]]; then
-    echo "usage: start_sitl.sh <ardupilot> <run-dir> <location> <instance> <sim-ip> <mp-port>" >&2
+if [[ $# -ne 7 ]]; then
+    echo "usage: start_sitl.sh <ardupilot> <run-dir> <location> <instance> <sim-ip> <mp-port> <wind-port>" >&2
     exit 64
 fi
 
@@ -12,6 +12,7 @@ location=$3
 instance=$4
 sim_ip=$5
 mission_planner_port=$6
+wind_port=$7
 defaults="$run_dir/../../config/arducopter-v0.1.parm"
 
 if [[ ! -f "$defaults" ]]; then
@@ -37,6 +38,7 @@ nohup setsid "$supervisor" "$ardupilot/build/sitl/bin/arducopter" \
     --slave 0 \
     --serial0="tcp:$((5760 + instance * 10))" \
     --serial1="tcp:$mission_planner_port" \
+    --serial2="tcp:$wind_port" \
     --defaults="$defaults" \
     --sim-address="$sim_ip" \
     -I"$instance" \

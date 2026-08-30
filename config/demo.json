@@ -6,6 +6,7 @@
     "sitl_sensor_udp": 9023,
     "mavlink_tcp": 5780,
     "mission_planner_tcp": 5782,
+    "wind_mavlink_tcp": 5784,
     "cosys_rpc_tcp": 41452
   },
   "origin": {

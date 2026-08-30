@@ -10,11 +10,20 @@ from vins_sim_bringup.wind_contract import (
 )
 
 
-def test_wind_runtime_enables_the_mavros_parameter_service():
-    config = (Path(__file__).parents[1] / "config" / "mavros_plugins.yaml").read_text(
+def test_wind_runtime_uses_an_isolated_mavlink_port_without_mavros_param_collision():
+    package = Path(__file__).parents[1]
+    plugins = (package / "config" / "mavros_plugins.yaml").read_text(encoding="utf-8")
+    launch = (package / "launch" / "vins_stack.launch.py").read_text(encoding="utf-8")
+    driver = (package / "vins_sim_bringup" / "wind_driver.py").read_text(
         encoding="utf-8"
     )
-    assert "      - param\n" in config
+    assert "      - param\n" not in plugins
+    assert 'DeclareLaunchArgument("wind_mavlink_url"' in launch
+    assert '"mavlink_url": LaunchConfiguration("wind_mavlink_url")' in launch
+    assert "from pymavlink import mavutil" in driver
+    assert "param_set_send(" in driver
+    assert 'type="PARAM_VALUE"' in driver
+    assert "create_client(ParamSetV2" not in driver
 
 
 def command(**overrides):

@@ -536,7 +536,7 @@ function Start-VinsStack([string]$RunDirectory, [object]$Settings, [switch]$Enab
     $launcher = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\start_vins_stack.sh')
     $domainId = [int]$script:Config.future_ros_domain_id
     $enableWindValue = if ($EnableWind) { 'true' } else { 'false' }
-    $command = "bash '$launcher' '$repoWsl' '$runWsl' '$($Settings.Network.WindowsIp)' '$($script:Config.ports.cosys_rpc_tcp)' '$($script:Config.ports.mavlink_tcp)' '$domainId' '900' '$enableWindValue'"
+    $command = "bash '$launcher' '$repoWsl' '$runWsl' '$($Settings.Network.WindowsIp)' '$($script:Config.ports.cosys_rpc_tcp)' '$($script:Config.ports.mavlink_tcp)' '$($script:Config.ports.wind_mavlink_tcp)' '$domainId' '900' '$enableWindValue'"
     $result = Invoke-Wsl -Command $command -AllowFailure
     if ($result.ExitCode -ne 0) { throw "Unable to launch VINS stack: $($result.Output -join ' ')" }
     $check = Invoke-Wsl -Command "test -s '$runWsl/vins/wsl.pid' && kill -0 `$(cat '$runWsl/vins/wsl.pid')" -AllowFailure
@@ -562,7 +562,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
         if (-not (Test-Path -LiteralPath $plugin) -or -not (Test-Path -LiteralPath $editorDll) -or -not (Test-Path -LiteralPath $sitl) -or $vinsBuildMissing) { Invoke-Build }
     }
     if (Get-ActiveRun) { throw 'An environment run is already active. Use .\dev.ps1 stop first.' }
-    foreach ($port in @($script:Config.ports.cosys_control_udp, $script:Config.ports.sitl_sensor_udp, $script:Config.ports.mavlink_tcp, $script:Config.ports.mission_planner_tcp, $script:Config.ports.cosys_rpc_tcp)) {
+    foreach ($port in @($script:Config.ports.cosys_control_udp, $script:Config.ports.sitl_sensor_udp, $script:Config.ports.mavlink_tcp, $script:Config.ports.mission_planner_tcp, $script:Config.ports.wind_mavlink_tcp, $script:Config.ports.cosys_rpc_tcp)) {
         if (-not (Test-PortFree $port)) { throw "Port $port is in use; SIM2 isolation cannot be guaranteed." }
     }
 
@@ -650,7 +650,7 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
         [double]$script:Config.origin.altitude_m
     )
     $sitlLauncher = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\start_sitl.sh')
-    $sitlCommand = "'$sitlLauncher' '$ardupilot' '$runWsl' '$location' '$($script:Config.sitl_instance)' '$($settings.Network.WindowsIp)' '$($script:Config.ports.mission_planner_tcp)'"
+    $sitlCommand = "'$sitlLauncher' '$ardupilot' '$runWsl' '$location' '$($script:Config.sitl_instance)' '$($settings.Network.WindowsIp)' '$($script:Config.ports.mission_planner_tcp)' '$($script:Config.ports.wind_mavlink_tcp)'"
     $sitlStart = Invoke-Wsl -Command $sitlCommand -AllowFailure
     if ($sitlStart.ExitCode -ne 0) { throw "Unable to launch ArduCopter SITL: $($sitlStart.Output -join ' ')" }
     $sitlLiveness = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\assert_sitl_alive.sh')
@@ -661,12 +661,12 @@ function Start-Environment([bool]$ForTest, [switch]$NoMissionPlanner, [switch]$S
     $mavlinkDeadline = (Get-Date).AddSeconds(60)
     $mavlinkReady = $false
     while ((Get-Date) -lt $mavlinkDeadline) {
-        $listen = Invoke-Wsl -Command "ss -H -ltn | grep -Eq '(^|:)$($script:Config.ports.mavlink_tcp)[[:space:]]' && ss -H -ltn | grep -Eq '(^|:)$($script:Config.ports.mission_planner_tcp)[[:space:]]'" -AllowFailure
+        $listen = Invoke-Wsl -Command "ss -H -ltn | grep -Eq '(^|:)$($script:Config.ports.mavlink_tcp)[[:space:]]' && ss -H -ltn | grep -Eq '(^|:)$($script:Config.ports.mission_planner_tcp)[[:space:]]' && ss -H -ltn | grep -Eq '(^|:)$($script:Config.ports.wind_mavlink_tcp)[[:space:]]'" -AllowFailure
         if ($listen.ExitCode -eq 0) { $mavlinkReady = $true; break }
         Start-Sleep -Seconds 1
     }
-    if (-not $mavlinkReady) { throw "SITL did not open MAVLink TCP $($script:Config.ports.mavlink_tcp)/$($script:Config.ports.mission_planner_tcp) within 60 seconds." }
-    Write-Pass 'MAVLink listeners' "TCP $($script:Config.ports.mavlink_tcp)/$($script:Config.ports.mission_planner_tcp) ready"
+    if (-not $mavlinkReady) { throw "SITL did not open MAVLink TCP $($script:Config.ports.mavlink_tcp)/$($script:Config.ports.mission_planner_tcp)/$($script:Config.ports.wind_mavlink_tcp) within 60 seconds." }
+    Write-Pass 'MAVLink listeners' "TCP $($script:Config.ports.mavlink_tcp)/$($script:Config.ports.mission_planner_tcp)/$($script:Config.ports.wind_mavlink_tcp) ready"
 
     if ($StartRos2) { Start-RosBridge -RunDirectory $runDirectory -Settings $settings }
     if ($StartVins) { Start-VinsStack -RunDirectory $runDirectory -Settings $settings -EnableWind:$StartWind }

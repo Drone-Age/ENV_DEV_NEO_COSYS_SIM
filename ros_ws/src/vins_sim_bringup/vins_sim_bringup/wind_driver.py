@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
 import json
-import math
+import time
 
 import cosysairsim
-from mavros_msgs.srv import ParamSetV2
+from pymavlink import mavutil
 import rclpy
-from rcl_interfaces.msg import ParameterType, ParameterValue
 from rclpy.node import Node
 from std_msgs.msg import String
 
@@ -28,35 +27,75 @@ class WindDriver(Node):
         self.declare_parameter("cosys_host", "127.0.0.1")
         self.declare_parameter("cosys_port", 41452)
         self.declare_parameter("cosys_timeout_s", 5.0)
+        self.declare_parameter("mavlink_url", "tcp:127.0.0.1:5784")
+        self.declare_parameter("mavlink_timeout_s", 8.0)
         self.cosys_host = str(self.get_parameter("cosys_host").value)
         self.cosys_port = int(self.get_parameter("cosys_port").value)
         self.cosys_timeout_s = float(self.get_parameter("cosys_timeout_s").value)
-        self.client = self.create_client(ParamSetV2, "/mavros/param/set")
+        self.mavlink_url = str(self.get_parameter("mavlink_url").value)
+        self.mavlink_timeout_s = float(self.get_parameter("mavlink_timeout_s").value)
         self.publisher = self.create_publisher(String, self.TRUTH_TOPIC, 10)
         self.create_subscription(String, self.COMMAND_TOPIC, self._command, 10)
         self.pending_command_id: str | None = None
         self.last_ack: dict[str, object] | None = None
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cosys-wind")
-        self._cosys_future: Future[tuple[float, float, float]] | None = None
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ivins-wind")
+        self._cosys_future: Future[
+            tuple[float, float, tuple[float, float, float]]
+        ] | None = None
         self._cosys_context: tuple[dict[str, object], float, float] | None = None
         self.create_timer(0.05, self._poll_cosys)
-
-    @staticmethod
-    def _request(name: str, value: float) -> ParamSetV2.Request:
-        request = ParamSetV2.Request()
-        request.force_set = True
-        request.param_id = name
-        request.value = ParameterValue(
-            type=ParameterType.PARAMETER_DOUBLE,
-            double_value=float(value),
-        )
-        return request
 
     @classmethod
     def _decode(cls, message: String) -> dict[str, object]:
         return decode_wind_command(json.loads(message.data))
 
-    def _set_and_read_cosys(self, wind: tuple[float, float, float]) -> tuple[float, float, float]:
+    @staticmethod
+    def _parameter_name(message) -> str:
+        value = message.param_id
+        if isinstance(value, bytes):
+            return value.decode("ascii", errors="ignore").rstrip("\x00")
+        return str(value).rstrip("\x00")
+
+    def _set_sitl_parameter(self, connection, name: str, value: float) -> float:
+        deadline = time.monotonic() + self.mavlink_timeout_s
+        while time.monotonic() < deadline:
+            connection.mav.param_set_send(
+                connection.target_system,
+                connection.target_component,
+                name.encode("ascii"),
+                float(value),
+                mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
+            )
+            response_deadline = min(deadline, time.monotonic() + 1.0)
+            while time.monotonic() < response_deadline:
+                response = connection.recv_match(
+                    type="PARAM_VALUE", blocking=True, timeout=0.25
+                )
+                if response is not None and self._parameter_name(response) == name:
+                    return float(response.param_value)
+        raise TimeoutError(f"SITL did not acknowledge parameter {name}")
+
+    def _set_and_read_backends(
+        self, speed_mps: float, direction_deg: float
+    ) -> tuple[float, float, tuple[float, float, float]]:
+        connection = mavutil.mavlink_connection(
+            self.mavlink_url,
+            source_system=250,
+            source_component=191,
+            autoreconnect=False,
+        )
+        try:
+            heartbeat = connection.wait_heartbeat(timeout=self.mavlink_timeout_s)
+            if heartbeat is None:
+                raise TimeoutError("SITL wind MAVLink heartbeat timed out")
+            applied_speed = self._set_sitl_parameter(connection, "SIM_WIND_SPD", speed_mps)
+            applied_direction = self._set_sitl_parameter(
+                connection, "SIM_WIND_DIR", direction_deg
+            )
+        finally:
+            connection.close()
+
+        wind = speed_direction_to_ned(applied_speed, applied_direction)
         client = cosysairsim.MultirotorClient(
             ip=self.cosys_host,
             port=self.cosys_port,
@@ -65,7 +104,11 @@ class WindDriver(Node):
         requested = cosysairsim.Vector3r(*wind)
         client.simSetWind(requested)
         applied = client.simGetWind()
-        return float(applied.x_val), float(applied.y_val), float(applied.z_val)
+        return (
+            applied_speed,
+            applied_direction,
+            (float(applied.x_val), float(applied.y_val), float(applied.z_val)),
+        )
 
     def _publish_ack(
         self,
@@ -108,9 +151,10 @@ class WindDriver(Node):
         applied_speed_mps: float,
         applied_direction_deg: float,
     ) -> None:
-        wind = speed_direction_to_ned(applied_speed_mps, applied_direction_deg)
         self._cosys_context = (payload, applied_speed_mps, applied_direction_deg)
-        self._cosys_future = self._executor.submit(self._set_and_read_cosys, wind)
+        self._cosys_future = self._executor.submit(
+            self._set_and_read_backends, applied_speed_mps, applied_direction_deg
+        )
 
     def _poll_cosys(self) -> None:
         future = self._cosys_future
@@ -123,23 +167,32 @@ class WindDriver(Node):
             self.pending_command_id = None
             return
         payload, speed_mps, direction_deg = context
-        requested = speed_direction_to_ned(speed_mps, direction_deg)
         try:
-            applied = future.result()
+            applied_speed, applied_direction, applied = future.result()
         except Exception as exc:
             self.pending_command_id = None
-            self.get_logger().error(f"Cosys rejected wind command or readback: {exc}")
+            self.get_logger().error(f"Wind backend rejected command or readback: {exc}")
             return
-        if not vector_matches(requested, applied):
+        requested = speed_direction_to_ned(speed_mps, direction_deg)
+        direction_error = abs(
+            (applied_direction - direction_deg + 180.0) % 360.0 - 180.0
+        )
+        if (
+            abs(applied_speed - speed_mps) > 0.02
+            or direction_error > 0.5
+            or not vector_matches(requested, applied)
+        ):
             self.pending_command_id = None
             self.get_logger().error(
-                f"Cosys wind readback mismatch: requested={requested}, applied={applied}"
+                "Wind readback mismatch: "
+                f"requested={requested}, sitl=({applied_speed}, {applied_direction}), "
+                f"cosys={applied}"
             )
             return
         self._publish_ack(
             payload,
-            applied_speed_mps=math.hypot(applied[0], applied[1]),
-            applied_direction_deg=math.degrees(math.atan2(applied[1], applied[0])),
+            applied_speed_mps=applied_speed,
+            applied_direction_deg=applied_direction,
             applied_vector=applied,
         )
 
@@ -159,43 +212,12 @@ class WindDriver(Node):
                     f"Wind command {command_id} waits for {self.pending_command_id}"
                 )
             return
-        if not self.client.service_is_ready():
-            self.get_logger().warning("SITL parameter service is not ready for wind command")
-            return
-
         self.pending_command_id = command_id
-        speed_future = self.client.call_async(
-            self._request("SIM_WIND_SPD", float(payload["speed_mps"]))
+        self._begin_cosys_apply(
+            payload,
+            float(payload["speed_mps"]),
+            float(payload["direction_deg"]),
         )
-        direction_future = self.client.call_async(
-            self._request("SIM_WIND_DIR", float(payload["direction_deg"]))
-        )
-        started = False
-
-        def apply_to_cosys_when_sitl_acknowledges(_future) -> None:
-            nonlocal started
-            if started or not speed_future.done() or not direction_future.done():
-                return
-            try:
-                speed_result = speed_future.result()
-                direction_result = direction_future.result()
-            except Exception as exc:
-                self.pending_command_id = None
-                self.get_logger().error(f"Wind parameter request failed: {exc}")
-                return
-            if not speed_result.success or not direction_result.success:
-                self.pending_command_id = None
-                self.get_logger().error("SITL rejected checkpoint wind command")
-                return
-            started = True
-            self._begin_cosys_apply(
-                payload,
-                float(speed_result.value.double_value),
-                float(direction_result.value.double_value),
-            )
-
-        speed_future.add_done_callback(apply_to_cosys_when_sitl_acknowledges)
-        direction_future.add_done_callback(apply_to_cosys_when_sitl_acknowledges)
 
     def destroy_node(self) -> bool:
         self._executor.shutdown(wait=False, cancel_futures=True)
