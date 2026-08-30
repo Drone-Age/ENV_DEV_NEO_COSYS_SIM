@@ -1,4 +1,5 @@
 import math
+from pathlib import Path
 
 import pytest
 
@@ -7,6 +8,13 @@ from vins_sim_bringup.wind_contract import (
     speed_direction_to_ned,
     vector_matches,
 )
+
+
+def test_wind_runtime_enables_the_mavros_parameter_service():
+    config = (Path(__file__).parents[1] / "config" / "mavros_plugins.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "      - param\n" in config
 
 
 def command(**overrides):
