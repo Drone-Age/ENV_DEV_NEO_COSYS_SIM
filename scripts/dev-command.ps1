@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'vins-test', 'stop', 'logs', 'env', 'capabilities')][string]$Command,
+    [Parameter(Mandatory)][ValidateSet('doctor', 'setup', 'build', 'run', 'test', 'camera-test', 'ros-test', 'vins-test', 'wind-test', 'stop', 'logs', 'env', 'capabilities')][string]$Command,
     [ValidateSet('list', 'doctor', 'build-map', 'import-assets')][string]$EnvironmentCommand = 'list',
     [string]$Environment = 'blocks',
     [ValidateSet('qualification', 'visual')][string]$RenderProfile = 'qualification',
@@ -237,6 +237,7 @@ function Get-BackendCapabilities {
             run = @('-Environment', '-RenderProfile', '-Headless', '-NoMissionPlanner', '-WithRos2', '-Preview')
             test = @('-Environment', '-RenderProfile', '-WithRos2', '-Preview')
             ros_test = @('-Environment', '-RenderProfile', '-Preview')
+            wind_test = @('-Environment', '-RenderProfile', '-Preview')
             qualification_accepted_args = @('-RunId', '-FlightLogDirectory', '-Rosbag', '-FlightQualification', '-FlightQualificationLimitM', '-FlightQualificationProfile', '-FlightQualificationNoWind', '-FlightQualificationNoVisualUi', '-RouteQualification', '-RouteQualificationProfile', '-VinsConfigFile', '-Distro', '-WithRos2', '-WithMissionPlanner')
         }
     }
@@ -861,6 +862,49 @@ function Invoke-VinsRuntimeTest {
     }
 }
 
+function Invoke-WindRuntimeTest {
+    try {
+        $runDirectory = Start-Environment -ForTest $true -NoMissionPlanner -StartRos2 -StartVins -StartWind
+    } catch {
+        $startupRun = Get-ActiveRun
+        if ($startupRun) { Stop-RecordedProcesses $startupRun }
+        Remove-Item -LiteralPath (Join-Path $script:RuntimeRoot 'active-run.txt') -Force -ErrorAction SilentlyContinue
+        throw
+    }
+    try {
+        $runWsl = Convert-ToWslPath $runDirectory
+        $probe = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\wind_probe.py')
+        $output = "$runWsl/vins/wind-probe.json"
+        $domainId = [int]$script:Config.future_ros_domain_id
+        $command = "if [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else source /opt/iros2j/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$probe' --output '$output' --timeout-per-stage 15"
+        Write-Step 'Probing correlated baseline, gust and recovery wind acknowledgements in ArduPilot and Unreal'
+        $result = Invoke-Wsl -Command $command -AllowFailure
+        $result.Output | Tee-Object -FilePath (Join-Path $runDirectory 'vins\wind-probe.log') | ForEach-Object { Write-Host $_ }
+        if ($result.ExitCode -ne 0) { throw "Wind acknowledgement qualification failed with code $($result.ExitCode)." }
+        $probeResult = Get-Content -Raw -LiteralPath (Join-Path $runDirectory 'vins\wind-probe.json') | ConvertFrom-Json
+        if ($probeResult.status -ne 'PASS') { throw "Wind acknowledgement verdict is $($probeResult.status)." }
+        $summaryPath = Join-Path $runDirectory 'summary.json'
+        $summary = Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json
+        $summary.status = 'PASS'
+        $summary | Add-Member -NotePropertyName completed_at -NotePropertyValue (Get-Date).ToUniversalTime().ToString('o') -Force
+        $summary | Add-Member -NotePropertyName wind_ack_probe -NotePropertyValue $probeResult -Force
+        Write-JsonFile $summary $summaryPath
+        Write-Host "Wind acknowledgement PASS: $runDirectory" -ForegroundColor Green
+    } catch {
+        $summaryPath = Join-Path $runDirectory 'summary.json'
+        if (Test-Path -LiteralPath $summaryPath) {
+            $summary = Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json
+            $summary.status = 'FAIL'
+            $summary | Add-Member -NotePropertyName error -NotePropertyValue $_.Exception.Message -Force
+            Write-JsonFile $summary $summaryPath
+        }
+        throw
+    } finally {
+        Stop-RecordedProcesses $runDirectory
+        Remove-Item -LiteralPath (Join-Path $script:RuntimeRoot 'active-run.txt') -Force -ErrorAction SilentlyContinue
+    }
+}
+
 switch ($Command) {
     'doctor' { exit (Invoke-Doctor) }
     'setup' { Invoke-Setup }
@@ -875,6 +919,7 @@ switch ($Command) {
     'test' { Assert-QualificationCapabilities; Invoke-SmokeTest }
     'ros-test' { Invoke-RosTopicTest }
     'vins-test' { Invoke-VinsRuntimeTest }
+    'wind-test' { Invoke-WindRuntimeTest }
     'camera-test' {
         Write-Step 'Qualifying raw-RGB camera profiles: 640x480 >= 20 FPS, 1280x720 >= 10 FPS (Mission Planner is not started)'
         & (Join-Path $PSScriptRoot 'camera-benchmark.ps1') -Width 640 -Height 480 -DurationSeconds 20 -MinRawFps 20 -Environment $Environment -RenderProfile $RenderProfile -Preview:$Preview

@@ -5,7 +5,7 @@ from nav_msgs.msg import Odometry
 import rclpy
 from vio_stack_interfaces.msg import ExternalNavHealth, IVINSStatus
 
-from vins_runtime_probe import VinsRuntimeProbe, apply_completion_gate
+from vins_runtime_probe import VinsRuntimeProbe, apply_completion_gate, write_result
 
 
 def probe_result():
@@ -29,6 +29,17 @@ def test_completion_gate_accepts_only_pass_verdict(tmp_path):
     assert result["status"] == "PASS"
     assert result["gates"]["mission_complete"] is True
     assert result["measurements"]["mission_verdict"] == "PASS"
+
+
+def test_probe_snapshots_are_replaced_as_complete_json(tmp_path):
+    path = tmp_path / "runtime-probe.json"
+    write_result(path, {"status": "WAITING", "sequence": 1})
+    write_result(path, {"status": "PASS", "sequence": 2})
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "status": "PASS",
+        "sequence": 2,
+    }
+    assert list(tmp_path.glob(".*.tmp")) == []
 
 
 def test_ground_truth_gate_rejects_accumulated_external_nav_drift():

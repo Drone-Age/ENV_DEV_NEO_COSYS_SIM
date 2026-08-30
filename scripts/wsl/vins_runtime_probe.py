@@ -301,10 +301,22 @@ class VinsRuntimeProbe(Node):
 
 def write_result(path: Path, result: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    # The evidence bundle is on a Windows DrvFS mount. Windows indexers can
-    # briefly hold the destination open, which makes POSIX atomic replace fail
-    # with EACCES even though a normal write remains valid.
-    path.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+    payload = json.dumps(result, indent=2, sort_keys=True)
+    temporary = path.with_name(f".{path.name}.{time.time_ns()}.tmp")
+    temporary.write_text(payload, encoding="utf-8")
+    # Evidence observers and Windows indexers may briefly hold the destination
+    # open on DrvFS. Keep the previous complete snapshot visible and retry the
+    # atomic publication instead of truncating it or crashing the live probe.
+    try:
+        for _ in range(100):
+            try:
+                temporary.replace(path)
+                return
+            except PermissionError:
+                time.sleep(0.02)
+        raise PermissionError(f"unable to publish probe snapshot: {path}")
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def apply_completion_gate(result: dict, completion_file: Path | None) -> dict:
