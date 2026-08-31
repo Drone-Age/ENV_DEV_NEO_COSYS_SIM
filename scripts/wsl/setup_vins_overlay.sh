@@ -34,10 +34,48 @@ done
 if ((${#missing[@]})); then
     echo "Installing VINS overlay prerequisites: ${missing[*]}" >&2
     apt-get update
+    transition_dir=
+    transition_ros_python_wrapper() {
+        local wrapper=$1
+        local module=$2
+        local owned_file=$3
+        if dpkg-query -W -f='${Status}' "$module" 2>/dev/null \
+                | grep -qx 'install ok installed'; then
+            return
+        fi
+        if [[ $(dpkg-query -S "$owned_file" 2>/dev/null | cut -d: -f1) != "$wrapper" ]]; then
+            return
+        fi
+        local candidate
+        candidate=$(apt-cache policy "$wrapper" | sed -n 's/^  Candidate: //p')
+        [[ -n $candidate && $candidate != '(none)' ]]
+        if [[ -z $transition_dir ]]; then
+            transition_dir=$(mktemp -d /var/tmp/indra-ros-python-transition.XXXXXX)
+        fi
+        (
+            cd "$transition_dir"
+            apt-get download "$wrapper=$candidate"
+        )
+        local packages=("$transition_dir/${wrapper}_"*.deb)
+        ((${#packages[@]} == 1)) && [[ -f ${packages[0]} ]]
+        dpkg --unpack "${packages[0]}"
+    }
+    transition_ros_python_wrapper \
+        python3-catkin-pkg python3-catkin-pkg-modules \
+        /usr/lib/python3/dist-packages/catkin_pkg/__init__.py
+    transition_ros_python_wrapper \
+        python3-rospkg python3-rospkg-modules \
+        /usr/lib/python3/dist-packages/rospkg/__init__.py
     apt-get install -y \
         build-essential cmake ninja-build pkg-config \
         python3-colcon-common-extensions python3-rosdep python3-serial \
         geographiclib-tools libeigen3-dev libceres-dev libopencv-dev
+    if [[ -n $transition_dir ]]; then
+        case $transition_dir in
+            /var/tmp/indra-ros-python-transition.*) rm -rf -- "$transition_dir" ;;
+            *) echo "refusing to remove unexpected transition directory: $transition_dir" >&2; exit 1 ;;
+        esac
+    fi
 fi
 
 if [[ ! -r /usr/share/GeographicLib/geoids/egm96-5.pgm ]]; then

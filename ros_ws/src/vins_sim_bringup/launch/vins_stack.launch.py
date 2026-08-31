@@ -195,6 +195,16 @@ def generate_launch_description():
                     "motion.final_angle_rad": 0.0,
                     "motion.initialization_timeout_s": 180.0,
                     "vins.maximum_solver_attempts": 40,
+                    # NewSIM has an independent metric ground-truth stream, so
+                    # accepting the production fallback scale floor (0.020)
+                    # would admit a visibly collapsed solution. Require a
+                    # near-metric solution instead. Blocks also contains long
+                    # sight lines, so require their depth evidence in a
+                    # simulation-specific 100-500 m window. The physical-device
+                    # profile remains unchanged at 0.020 / 1-100 m.
+                    "vins.minimum_metric_scale": 0.5,
+                    "vins.minimum_feature_depth_mean_m": 100.0,
+                    "vins.maximum_feature_depth_mean_m": 500.0,
                     "vins.minimum_imu_excitation": 0.08,
                     "vins.maximum_gyroscope_bias_rad_s": 0.05,
                     "vins.odometry_topic": "/vins_estimator/odometry",

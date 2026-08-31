@@ -17,8 +17,10 @@ function Write-Warn([string]$Name, [string]$Detail) { Write-Host ("  WARN  {0,-2
 
 function Initialize-EnvironmentPackage([string]$EnvironmentId) {
     $property = $script:EnvironmentLock.environments.psobject.Properties[$EnvironmentId]
-    if (-not $property -or -not $property.Value.submodule) { return }
-    $relativePath = [string]$property.Value.submodule
+    if (-not $property) { return }
+    $submoduleProperty = $property.Value.psobject.Properties['submodule']
+    if (-not $submoduleProperty -or [string]::IsNullOrWhiteSpace([string]$submoduleProperty.Value)) { return }
+    $relativePath = [string]$submoduleProperty.Value
     $absolutePath = Join-Path $script:RepoRoot $relativePath
     $gitMarker = Join-Path $absolutePath '.git'
     if (-not (Test-Path -LiteralPath $gitMarker)) {

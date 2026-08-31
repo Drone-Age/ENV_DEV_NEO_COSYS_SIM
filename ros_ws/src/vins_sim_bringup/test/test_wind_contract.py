@@ -26,6 +26,24 @@ def test_wind_runtime_uses_an_isolated_mavlink_port_without_mavros_param_collisi
     assert "create_client(ParamSetV2" not in driver
 
 
+def test_news_sim_initializer_requires_a_near_metric_solution():
+    package = Path(__file__).parents[1]
+    launch = (package / "launch" / "vins_stack.launch.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"vins.minimum_metric_scale": 0.5' in launch
+    assert '"vins.minimum_feature_depth_mean_m": 100.0' in launch
+    assert '"vins.maximum_feature_depth_mean_m": 500.0' in launch
+
+
+def test_camera_benchmark_passes_the_isolated_wind_port_to_sitl():
+    repository = Path(__file__).parents[4]
+    launcher = (repository / "scripts" / "camera-benchmark.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "'$($script:Config.ports.wind_mavlink_tcp)'" in launcher
+
+
 def command(**overrides):
     value = {
         "command_id": "climb-01-gust",

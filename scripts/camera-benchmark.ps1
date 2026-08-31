@@ -122,7 +122,7 @@ try {
         [double]$script:Config.origin.altitude_m
     )
     $sitlLauncher = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\start_sitl.sh')
-    $sitlCommand = "'$sitlLauncher' '$ardupilot' '$runWsl' '$location' '$($script:Config.sitl_instance)' '$($settingsInfo.Network.WindowsIp)' '$($script:Config.ports.mission_planner_tcp)'"
+    $sitlCommand = "'$sitlLauncher' '$ardupilot' '$runWsl' '$location' '$($script:Config.sitl_instance)' '$($settingsInfo.Network.WindowsIp)' '$($script:Config.ports.mission_planner_tcp)' '$($script:Config.ports.wind_mavlink_tcp)'"
     $sitlStart = Invoke-Wsl -Command $sitlCommand -AllowFailure
     if ($sitlStart.ExitCode -ne 0) { throw "Unable to launch ArduCopter SITL: $($sitlStart.Output -join ' ')" }
     $sitlLiveness = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\assert_sitl_alive.sh')
