@@ -63,11 +63,23 @@ def generate_launch_description():
         Node(
             package="vins_sim_bringup",
             executable="imu_qos_adapter",
+            name="body_imu_qos_adapter",
             output="screen",
             parameters=[{
                 "use_sim_time": True,
                 "input_topic": "/sim/body/imu",
                 "output_topic": "/mavros/imu/data_raw",
+            }],
+        ),
+        Node(
+            package="vins_sim_bringup",
+            executable="imu_qos_adapter",
+            name="camera_imu_qos_adapter",
+            output="screen",
+            parameters=[{
+                "use_sim_time": True,
+                "input_topic": "/sim/camera/imu",
+                "output_topic": "/vins/camera/imu",
             }],
         ),
         Node(
@@ -136,7 +148,9 @@ def generate_launch_description():
         ),
 
         TimerAction(
-            period=3.0,
+            # Leave enough time for the fail-closed qualification subscriber to
+            # attach before the one-shot 0..90 degree calibration sweep starts.
+            period=30.0,
             actions=[Node(
                 package="vins_initializer",
                 executable="vins-initializer",
@@ -150,6 +164,17 @@ def generate_launch_description():
                     "ihub.recalibrate_service": "/camera/tilt/recalibrate",
                     "ihub.handshake_timeout_s": 180.0,
                     "ihub.calibration_timeout_s": 180.0,
+                    # Windows/WSL qualification can briefly pause Python ROS
+                    # callbacks while Unreal and Fast DDS contend for CPU. The
+                    # status is published at 10 Hz; a 10 s outage still fails
+                    # closed while avoiding a false terminal fault from one
+                    # host scheduling stall.
+                    "ihub.status_timeout_s": 10.0,
+                    # Keep the release initializer responsive on a two-thread
+                    # Python executor while VINS and ground truth are active.
+                    # This loop commands slow gimbal state transitions only;
+                    # the independent 50 Hz batched sensor polling is unchanged.
+                    "control_rate_hz": 10.0,
                     # A persisted flash record is useful operationally but is
                     # not evidence of a sweep performed in this immutable run.
                     "ihub.require_session_calibration": True,

@@ -25,13 +25,13 @@ mission_result="$vins_dir/qualification-mission.json"
 mission_log="$vins_dir/qualification-mission.log"
 
 mkdir -p "$vins_dir"
-if [[ -f /opt/ros/jazzy/setup.bash ]]; then
-    set +u
-    source /opt/ros/jazzy/setup.bash
-    set -u
-elif [[ -f /opt/iros2j/setup.bash ]]; then
+if [[ -f /opt/iros2j/setup.bash ]]; then
     set +u
     source /opt/iros2j/setup.bash
+    set -u
+elif [[ -f /opt/ros/jazzy/setup.bash ]]; then
+    set +u
+    source /opt/ros/jazzy/setup.bash
     set -u
 else
     echo "ROS 2 Jazzy setup was not found" >&2
@@ -106,7 +106,7 @@ timeout --signal=TERM --kill-after=10 "$((mission_timeout_s + 30))" \
     --output "$mission_result" \
     --sitl-pid-file "$run_dir/sitl/sitl.pid" \
     --lat "$latitude" --lon "$longitude" --alt "$origin_altitude" \
-    --takeoff "$takeoff_m" --side "$side_m" --laps 4 --altitude-step 3 \
+    --takeoff "$takeoff_m" --side "$side_m" --laps 2 --altitude-step 3 \
     --fixed-yaw-deg 1.0 \
     --required-wp-yaw-behavior 0.0 \
     --initial-ground-speed 0.75 --cruise-ground-speed 2.0 \

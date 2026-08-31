@@ -293,7 +293,7 @@ function Invoke-Doctor {
     if ($cmake) { Write-Pass 'CMake' ((& cmake.exe --version | Select-Object -First 1)) } else { Write-Fail 'CMake' 'cmake.exe is not on PATH'; $failures++ }
     $wsl = Invoke-Wsl -Command 'lsb_release -ds' -AllowFailure
     if ($wsl.ExitCode -eq 0 -and (($wsl.Output -join ' ') -match 'Ubuntu 24\.04')) { Write-Pass 'WSL2 Ubuntu' ($wsl.Output -join ' ') } else { Write-Fail 'WSL2 Ubuntu' ($wsl.Output -join ' '); $failures++ }
-    $ros = Invoke-Wsl -Command "if [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; elif [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; else exit 66; fi; test -x ~/venv-ardupilot/bin/python3 && ~/venv-ardupilot/bin/python3 -c 'import msgpackrpc, rclpy; from sensor_msgs.msg import Image, Imu; from nav_msgs.msg import Odometry; from rosgraph_msgs.msg import Clock'" -AllowFailure
+    $ros = Invoke-Wsl -Command "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; elif [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else exit 66; fi; test -x ~/venv-ardupilot/bin/python3 && ~/venv-ardupilot/bin/python3 -c 'import msgpackrpc, rclpy; from sensor_msgs.msg import Image, Imu; from nav_msgs.msg import Odometry; from rosgraph_msgs.msg import Clock'" -AllowFailure
     if ($ros.ExitCode -eq 0) { Write-Pass 'ROS 2 Jazzy' 'ArduPilot venv sees RPC and SIM2 ROS message contracts' } else { Write-Fail 'ROS 2 Jazzy' 'combined ArduPilot venv + /opt/iros2j or /opt/ros/jazzy environment is required'; $failures++ }
 
     $gpu = Get-CimInstance Win32_VideoController | Where-Object Name -Match 'NVIDIA' | Select-Object -First 1
@@ -410,7 +410,7 @@ function Invoke-Setup {
     Write-Pass 'Cosys Python client' 'rpc-msgpack available for camera qualification'
     Write-Pass 'ArduPilot prerequisites' 'Ubuntu toolchain and ~/venv-ardupilot ready'
 
-    $rosReady = Invoke-Wsl -Command "if [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; elif [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; else exit 66; fi; ~/venv-ardupilot/bin/python3 -c 'import msgpackrpc, rclpy; from sensor_msgs.msg import Image, Imu; from nav_msgs.msg import Odometry; from rosgraph_msgs.msg import Clock'" -AllowFailure
+    $rosReady = Invoke-Wsl -Command "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; elif [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else exit 66; fi; ~/venv-ardupilot/bin/python3 -c 'import msgpackrpc, rclpy; from sensor_msgs.msg import Image, Imu; from nav_msgs.msg import Odometry; from rosgraph_msgs.msg import Clock'" -AllowFailure
     if ($rosReady.ExitCode -ne 0) {
         $rosSetup = Convert-ToWslPath (Join-Path $PSScriptRoot 'wsl\setup_ros2_jazzy.sh')
         & wsl.exe -d $script:Lock.platform.wsl_distribution -u root -- bash $rosSetup
@@ -769,7 +769,7 @@ function Invoke-RosTopicTest {
         $probe = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\ros_topic_probe.py')
         $output = "$runWsl/ros2/topic-probe.json"
         $domainId = [int]$script:Config.future_ros_domain_id
-        $command = "if [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else source /opt/iros2j/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$probe' --duration 12 --profile '$profile' --output '$output'"
+        $command = "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; else source /opt/ros/jazzy/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$probe' --duration 12 --profile '$profile' --output '$output'"
         Write-Step 'Probing SIM2-compatible ROS 2 topics, rates, frames and timestamps'
         $result = Invoke-Wsl -Command $command -AllowFailure
         $result.Output | Tee-Object -FilePath (Join-Path $runDirectory 'ros2\topic-probe.log') | ForEach-Object { Write-Host $_ }
@@ -815,7 +815,10 @@ function Invoke-VinsRuntimeTest {
         $output = "$runWsl/vins/runtime-probe.json"
         $domainId = [int]$script:Config.future_ros_domain_id
         $controllerPort = [int]$script:Config.ports.mission_planner_tcp
-        $missionTimeout = [int]$script:Config.mission.timeout_s
+        # The VINS route includes calibration plus two translation laps. Cold
+        # GPS/pre-arm recovery can consume ~40 s before AUTO starts, so retain
+        # enough time for the mandatory LAND and DISARM evidence.
+        $missionTimeout = [Math]::Max(360, [int]$script:Config.mission.timeout_s)
         $command = "bash '$qualification' '$repoWsl' '$runWsl' '$domainId' '$controllerPort' '$($script:Config.origin.latitude)' '$($script:Config.origin.longitude)' '$($script:Config.origin.altitude_m)' '$($script:Config.mission.takeoff_m)' '$($script:Config.mission.square_side_m)' '$missionTimeout' '480' '180'"
         Write-Step 'Waiting for iHUB calibration, then flying a GPS-safe translation route for VINS/ExternalNav admission'
         $result = Invoke-Wsl -Command $command -AllowFailure
@@ -829,7 +832,7 @@ function Invoke-VinsRuntimeTest {
         if ($missionResult.verdict -ne 'PASS') { throw "VINS translation mission verdict is $($missionResult.verdict)." }
         $windProbe = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\wind_probe.py')
         $windOutput = "$runWsl/vins/wind-probe.json"
-        $windCommand = "if [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else source /opt/iros2j/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$windProbe' --output '$windOutput' --timeout-per-stage 15"
+        $windCommand = "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; else source /opt/ros/jazzy/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$windProbe' --output '$windOutput' --timeout-per-stage 15"
         Write-Step 'Probing correlated baseline, gust and recovery wind acknowledgements in ArduPilot and Unreal'
         $windResult = Invoke-Wsl -Command $windCommand -AllowFailure
         $windResult.Output | Tee-Object -FilePath (Join-Path $runDirectory 'vins\wind-probe.log') | ForEach-Object { Write-Host $_ }
@@ -877,7 +880,7 @@ function Invoke-WindRuntimeTest {
         $probe = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\wind_probe.py')
         $output = "$runWsl/vins/wind-probe.json"
         $domainId = [int]$script:Config.future_ros_domain_id
-        $command = "if [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else source /opt/iros2j/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$probe' --output '$output' --timeout-per-stage 15"
+        $command = "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; else source /opt/ros/jazzy/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$probe' --output '$output' --timeout-per-stage 15"
         Write-Step 'Probing correlated baseline, gust and recovery wind acknowledgements in ArduPilot and Unreal'
         $result = Invoke-Wsl -Command $command -AllowFailure
         $result.Output | Tee-Object -FilePath (Join-Path $runDirectory 'vins\wind-probe.log') | ForEach-Object { Write-Host $_ }
@@ -923,7 +926,7 @@ function Invoke-IrosEnvironmentTest {
         $topicProbe = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\ros_topic_probe.py')
         $topicOutput = "$runWsl/ros2/topic-probe.json"
         $domainId = [int]$script:Config.future_ros_domain_id
-        $topicCommand = "if [ -f /opt/ros/jazzy/setup.bash ]; then source /opt/ros/jazzy/setup.bash; else source /opt/iros2j/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$topicProbe' --duration 12 --profile '$profile' --output '$topicOutput'"
+        $topicCommand = "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; else source /opt/ros/jazzy/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$topicProbe' --duration 12 --profile '$profile' --output '$topicOutput'"
         Write-Step 'Qualifying iROS camera, CameraImu, odometry and strictly increasing timestamps'
         $topicResult = Invoke-Wsl -Command $topicCommand -AllowFailure
         $topicResult.Output | Tee-Object -FilePath (Join-Path $runDirectory 'ros2\topic-probe.log') | ForEach-Object { Write-Host $_ }

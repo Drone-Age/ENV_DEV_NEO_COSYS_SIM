@@ -7,15 +7,15 @@ if [[ $# -ne 1 ]]; then
 fi
 
 repo_root=$1
-if [[ -f /opt/ros/jazzy/setup.bash ]]; then
-    ros_provider=ros2
-    set +u
-    source /opt/ros/jazzy/setup.bash
-    set -u
-elif [[ -f /opt/iros2j/setup.bash ]]; then
+if [[ -f /opt/iros2j/setup.bash ]]; then
     ros_provider=iros2j
     set +u
     source /opt/iros2j/setup.bash
+    set -u
+elif [[ -f /opt/ros/jazzy/setup.bash ]]; then
+    ros_provider=ros2
+    set +u
+    source /opt/ros/jazzy/setup.bash
     set -u
 else
     echo "ROS 2 Jazzy setup was not found" >&2

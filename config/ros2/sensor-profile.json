@@ -20,7 +20,7 @@
     "name": "BodyImu",
     "frame_id": "imu_link",
     "nominal_hz": 200.0,
-    "wall_budget_hz": 194.0,
+    "wall_budget_hz": 198.0,
     "batch_poll_hz": 50.0,
     "max_angular_velocity_rad_s": 35.0,
     "max_linear_acceleration_m_s2": 200.0
@@ -29,7 +29,7 @@
     "name": "CameraImu",
     "frame_id": "camera_imu_link",
     "nominal_hz": 200.0,
-    "wall_budget_hz": 194.0,
+    "wall_budget_hz": 198.0,
     "batch_poll_hz": 50.0,
     "max_angular_velocity_rad_s": 35.0,
     "max_linear_acceleration_m_s2": 200.0,

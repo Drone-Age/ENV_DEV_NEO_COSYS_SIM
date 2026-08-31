@@ -24,13 +24,13 @@ overlay_root="${INDRA_VINS_RUNTIME_ROOT:-$HOME/.local/share/indra-cosys}/vins-ov
 overlay="$overlay_root/install/setup.bash"
 mkdir -p "$vins_dir" /tmp/indra-cosys-ihub
 
-if [[ -f /opt/ros/jazzy/setup.bash ]]; then
-    set +u
-    source /opt/ros/jazzy/setup.bash
-    set -u
-elif [[ -f /opt/iros2j/setup.bash ]]; then
+if [[ -f /opt/iros2j/setup.bash ]]; then
     set +u
     source /opt/iros2j/setup.bash
+    set -u
+elif [[ -f /opt/ros/jazzy/setup.bash ]]; then
+    set +u
+    source /opt/ros/jazzy/setup.bash
     set -u
 else
     echo "ROS 2 Jazzy setup was not found" >&2
@@ -47,7 +47,14 @@ set -u
 export ROS_DOMAIN_ID="$domain_id"
 rpc_site="$($HOME/venv-ardupilot/bin/python3 -c 'import site; print(site.getsitepackages()[0])')"
 export PYTHONPATH="$repo_root/third_party/Cosys-AirSim/PythonClient:$rpc_site${PYTHONPATH:+:$PYTHONPATH}"
-export IHUB_SIM_BRIDGE="$overlay_root/install/lib/libihub_sim_bridge.so"
+if [[ -f "$overlay_root/install/lib/libihub_sim_bridge.so" ]]; then
+    export IHUB_SIM_BRIDGE="$overlay_root/install/lib/libihub_sim_bridge.so"
+elif [[ -f /opt/vio_stack/current/lib/libihub_sim_bridge.so ]]; then
+    export IHUB_SIM_BRIDGE=/opt/vio_stack/current/lib/libihub_sim_bridge.so
+else
+    echo "Pinned iHUB simulation bridge was not found" >&2
+    exit 68
+fi
 
 nohup setsid timeout --signal=TERM --kill-after=10 "$timeout_s" \
     ros2 launch vins_sim_bringup vins_stack.launch.py \

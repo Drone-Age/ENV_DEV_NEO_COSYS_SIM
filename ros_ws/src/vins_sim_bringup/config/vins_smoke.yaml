@@ -1,6 +1,6 @@
 %YAML:1.0
 
-imu_topic: "/sim/camera/imu"
+imu_topic: "/vins/camera/imu"
 image_topic: "/sim/camera/image_raw"
 output_path: "/tmp/vins_output/"
 

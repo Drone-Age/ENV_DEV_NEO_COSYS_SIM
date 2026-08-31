@@ -347,12 +347,20 @@ def main() -> int:
     rclpy.init()
     node = VinsRuntimeProbe()
     deadline = time.monotonic() + args.timeout
+    next_snapshot = time.monotonic()
     result = node.result()
     try:
         while time.monotonic() < deadline:
-            rclpy.spin_once(node, timeout_sec=0.1)
+            # Drain ROS callbacks continuously. Writing every callback snapshot
+            # to a Windows/OneDrive-backed DrvFS path can take hundreds of
+            # milliseconds and starve the lower-rate ground-truth subscription
+            # behind the 200 Hz IMU stream.
+            rclpy.spin_once(node, timeout_sec=0.02)
             result = apply_completion_gate(node.result(), args.completion_file)
-            write_result(args.output, result)
+            now = time.monotonic()
+            if now >= next_snapshot or result["status"] == "PASS":
+                write_result(args.output, result)
+                next_snapshot = now + 0.5
             if result["status"] == "PASS":
                 print(json.dumps(result, indent=2, sort_keys=True))
                 return 0
