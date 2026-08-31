@@ -30,7 +30,9 @@ vision_bridge:
     alignment_admission_topic: "/sim/qualification/external_nav_alignment_admission"
     alignment_reference_max_age_s: 0.25
     alignment_reference_samples: 10
-    alignment_reference_min_baseline_m: 0.0
+    # A stationary pose preserves stochastic VINS heading bias and turns it
+    # into cross-track error. Fit the DEV-only transform from real motion.
+    alignment_reference_min_baseline_m: 5.0
     alignment_reference_max_spread_m: 1.0
     alignment_reference_max_yaw_spread_deg: 5.0
 

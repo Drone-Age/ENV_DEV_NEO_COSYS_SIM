@@ -32,8 +32,29 @@ def test_news_sim_initializer_requires_a_near_metric_solution():
         encoding="utf-8"
     )
     assert '"vins.minimum_metric_scale": 0.5' in launch
-    assert '"vins.minimum_feature_depth_mean_m": 100.0' in launch
+    assert '"vins.minimum_feature_depth_mean_m": 40.0' in launch
     assert '"vins.maximum_feature_depth_mean_m": 500.0' in launch
+
+
+def test_newsim_external_nav_alignment_requires_motion_baseline():
+    package = Path(__file__).parents[1]
+    config = (package / "config" / "external_nav_sim.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "alignment_reference_min_baseline_m: 5.0" in config
+
+
+def test_vins_qualification_has_one_bounded_recovery_translation():
+    repository = Path(__file__).parents[4]
+    launch = (Path(__file__).parents[1] / "launch" / "vins_stack.launch.py").read_text(
+        encoding="utf-8"
+    )
+    qualification = (
+        repository / "scripts" / "wsl" / "vins_flight_qualification.sh"
+    ).read_text(encoding="utf-8")
+    assert '"motion.initialization_timeout_s": 360.0' in launch
+    assert "qualification-recovery-mission.json" in qualification
+    assert qualification.count("VINS_RECOVERY_TRANSLATION_BEGIN") == 1
 
 
 def test_camera_benchmark_passes_the_isolated_wind_port_to_sitl():

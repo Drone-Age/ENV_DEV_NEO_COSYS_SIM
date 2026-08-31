@@ -193,17 +193,23 @@ def generate_launch_description():
                     "motion.lower_angle_rad": 0.0,
                     "motion.upper_angle_rad": 1.5707963267948966,
                     "motion.final_angle_rad": 0.0,
-                    "motion.initialization_timeout_s": 180.0,
+                    # Keep the fail-closed initializer alive for one bounded
+                    # recovery route when the first translation produces only
+                    # collapsed/non-metric candidates.
+                    "motion.initialization_timeout_s": 360.0,
                     "vins.maximum_solver_attempts": 40,
                     # NewSIM has an independent metric ground-truth stream, so
                     # accepting the production fallback scale floor (0.020)
                     # would admit a visibly collapsed solution. Require a
                     # near-metric solution instead. Blocks also contains long
                     # sight lines, so require their depth evidence in a
-                    # simulation-specific 100-500 m window. The physical-device
+                    # simulation-specific 40-500 m window. The lower bound
+                    # retains rejection of collapsed centimetre-scale solves
+                    # while admitting the repeatably near-metric 49-61 m
+                    # candidates observed in the same Blocks route. The physical-device
                     # profile remains unchanged at 0.020 / 1-100 m.
                     "vins.minimum_metric_scale": 0.5,
-                    "vins.minimum_feature_depth_mean_m": 100.0,
+                    "vins.minimum_feature_depth_mean_m": 40.0,
                     "vins.maximum_feature_depth_mean_m": 500.0,
                     "vins.minimum_imu_excitation": 0.08,
                     "vins.maximum_gyroscope_bias_rad_s": 0.05,

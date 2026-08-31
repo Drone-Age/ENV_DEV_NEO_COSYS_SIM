@@ -912,7 +912,7 @@ function Invoke-VinsRuntimeTest {
         # GPS/pre-arm recovery can consume ~40 s before AUTO starts, so retain
         # enough time for the mandatory LAND and DISARM evidence.
         $missionTimeout = [Math]::Max(360, [int]$script:Config.mission.timeout_s)
-        $command = "bash '$qualification' '$repoWsl' '$runWsl' '$domainId' '$controllerPort' '$($script:Config.origin.latitude)' '$($script:Config.origin.longitude)' '$($script:Config.origin.altitude_m)' '$($script:Config.mission.takeoff_m)' '$($script:Config.mission.square_side_m)' '$missionTimeout' '480' '180'"
+        $command = "bash '$qualification' '$repoWsl' '$runWsl' '$domainId' '$controllerPort' '$($script:Config.origin.latitude)' '$($script:Config.origin.longitude)' '$($script:Config.origin.altitude_m)' '$($script:Config.mission.takeoff_m)' '$($script:Config.mission.square_side_m)' '$missionTimeout' '480' '180' '$IvinsRuntime'"
         Write-Step 'Waiting for iHUB calibration, then flying a GPS-safe translation route for VINS/ExternalNav admission'
         $result = Invoke-Wsl -Command $command -AllowFailure
         $result.Output | Tee-Object -FilePath (Join-Path $runDirectory 'vins\runtime-probe.log') | ForEach-Object { Write-Host $_ }
@@ -923,6 +923,12 @@ function Invoke-VinsRuntimeTest {
         if (-not (Test-Path -LiteralPath $missionPath)) { throw 'VINS translation mission evidence is missing.' }
         $missionResult = Get-Content -Raw -LiteralPath $missionPath | ConvertFrom-Json
         if ($missionResult.verdict -ne 'PASS') { throw "VINS translation mission verdict is $($missionResult.verdict)." }
+        $recoveryMissionResult = $null
+        $recoveryMissionPath = Join-Path $runDirectory 'vins\qualification-recovery-mission.json'
+        if (Test-Path -LiteralPath $recoveryMissionPath) {
+            $recoveryMissionResult = Get-Content -Raw -LiteralPath $recoveryMissionPath | ConvertFrom-Json
+            if ($recoveryMissionResult.verdict -ne 'PASS') { throw "VINS recovery translation mission verdict is $($recoveryMissionResult.verdict)." }
+        }
         $windProbe = Convert-ToWslPath (Join-Path $script:RepoRoot 'scripts\wsl\wind_probe.py')
         $windOutput = "$runWsl/vins/wind-probe.json"
         $windCommand = "if [ -f /opt/iros2j/setup.bash ]; then source /opt/iros2j/setup.bash; else source /opt/ros/jazzy/setup.bash; fi; export ROS_DOMAIN_ID=$domainId; ~/venv-ardupilot/bin/python3 '$windProbe' --output '$windOutput' --timeout-per-stage 15"
@@ -940,6 +946,7 @@ function Invoke-VinsRuntimeTest {
         $summary | Add-Member -NotePropertyName completed_at -NotePropertyValue (Get-Date).ToUniversalTime().ToString('o') -Force
         $summary | Add-Member -NotePropertyName vins_runtime_probe -NotePropertyValue $probeResult -Force
         $summary | Add-Member -NotePropertyName vins_translation_mission -NotePropertyValue $missionResult -Force
+        if ($recoveryMissionResult) { $summary | Add-Member -NotePropertyName vins_recovery_translation_mission -NotePropertyValue $recoveryMissionResult -Force }
         $summary | Add-Member -NotePropertyName wind_ack_probe -NotePropertyValue $windProbeResult -Force
         $summary | Add-Member -NotePropertyName ros_bridge_status -NotePropertyValue $bridgeStatus -Force
         Write-JsonFile $summary $summaryPath

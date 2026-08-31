@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 12 ]]; then
-    echo "usage: vins_flight_qualification.sh <repo-root> <run-dir> <domain-id> <controller-port> <lat> <lon> <origin-alt> <takeoff-m> <side-m> <mission-timeout-s> <probe-timeout-s> <ready-timeout-s>" >&2
+if [[ $# -ne 13 ]]; then
+    echo "usage: vins_flight_qualification.sh <repo-root> <run-dir> <domain-id> <controller-port> <lat> <lon> <origin-alt> <takeoff-m> <side-m> <mission-timeout-s> <probe-timeout-s> <ready-timeout-s> <installed|source>" >&2
     exit 64
 fi
 
@@ -18,11 +18,14 @@ side_m=$9
 mission_timeout_s=${10}
 probe_timeout_s=${11}
 ready_timeout_s=${12}
+runtime_mode=${13}
 vins_dir="$run_dir/vins"
 probe_result="$vins_dir/runtime-probe.json"
 probe_process_log="$vins_dir/runtime-probe.process.log"
 mission_result="$vins_dir/qualification-mission.json"
 mission_log="$vins_dir/qualification-mission.log"
+recovery_result="$vins_dir/qualification-recovery-mission.json"
+recovery_log="$vins_dir/qualification-recovery-mission.log"
 
 mkdir -p "$vins_dir"
 if [[ -f /opt/iros2j/setup.bash ]]; then
@@ -37,7 +40,12 @@ else
     echo "ROS 2 Jazzy setup was not found" >&2
     exit 66
 fi
-overlay_root="${INDRA_VINS_RUNTIME_ROOT:-$HOME/.local/share/indra-cosys}/vins-overlay-jazzy"
+runtime_root="${INDRA_VINS_RUNTIME_ROOT:-$HOME/.local/share/indra-cosys}"
+case "$runtime_mode" in
+    installed) overlay_root="$runtime_root/ivins-adapter-overlay-jazzy" ;;
+    source) overlay_root="$runtime_root/vins-overlay-jazzy" ;;
+    *) echo "invalid IVINS runtime mode: $runtime_mode" >&2; exit 64 ;;
+esac
 set +u
 source "$overlay_root/install/setup.bash"
 set -u
@@ -121,6 +129,51 @@ if (( mission_rc != 0 )); then
     exit "$mission_rc"
 fi
 echo "VINS_TRANSLATION_MISSION_PASS"
+
+# A monocular cold start is deliberately fail-closed and may reject every
+# candidate from the first route.  Do not spend the rest of the bounded probe
+# timeout stationary: provide one additional, independently landed/disarmed
+# translation route while retaining both immutable mission records.
+needs_recovery=1
+if [[ -s $probe_result ]] && "$python_bin" - "$probe_result" <<'PY'
+import json
+import sys
+
+try:
+    gates = json.load(open(sys.argv[1], encoding="utf-8"))["gates"]
+except (OSError, KeyError, TypeError, ValueError):
+    raise SystemExit(1)
+required = ("vins_tracking", "external_nav_ready", "external_nav_ground_truth")
+raise SystemExit(0 if all(gates.get(name) for name in required) else 1)
+PY
+then
+    needs_recovery=0
+fi
+
+if (( needs_recovery == 1 )); then
+    echo "VINS_RECOVERY_TRANSLATION_BEGIN first route did not complete all VINS gates"
+    set +e
+    timeout --signal=TERM --kill-after=10 "$((mission_timeout_s + 30))" \
+        "$python_bin" "$controller" \
+        --connect "tcp:127.0.0.1:$controller_port" \
+        --output "$recovery_result" \
+        --sitl-pid-file "$run_dir/sitl/sitl.pid" \
+        --lat "$latitude" --lon "$longitude" --alt "$origin_altitude" \
+        --takeoff "$takeoff_m" --side "$side_m" --laps 2 --altitude-step 3 \
+        --fixed-yaw-deg 1.0 \
+        --required-wp-yaw-behavior 0.0 \
+        --initial-ground-speed 0.75 --cruise-ground-speed 2.0 \
+        --timeout "$mission_timeout_s" \
+        >"$recovery_log" 2>&1
+    recovery_rc=$?
+    set -e
+    if (( recovery_rc != 0 )); then
+        cat "$recovery_log"
+        echo "VINS_RECOVERY_TRANSLATION_FAIL code=$recovery_rc" >&2
+        exit "$recovery_rc"
+    fi
+    echo "VINS_RECOVERY_TRANSLATION_PASS"
+fi
 
 set +e
 wait "$probe_pid"
